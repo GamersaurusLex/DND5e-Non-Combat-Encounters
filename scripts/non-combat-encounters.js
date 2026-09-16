@@ -36,7 +36,7 @@ function newCheck() {
 
 function newTarget(type = "social") {
   const names = { social: "New NPC", research: "New Source", chase: "New Obstacle", exploration: "New Location", skill: "New Challenge" };
-  return { id: randomID(), name: names[type], image: "icons/svg/mystery-man.svg", description: "", points: 0, goal: 4, checks: [newCheck()] };
+  return { id: randomID(), sourceUuid: "", sourceType: "", name: names[type], image: "icons/svg/mystery-man.svg", description: "", points: 0, goal: 4, checks: [newCheck()] };
 }
 
 function newEncounter() {
@@ -57,7 +57,7 @@ function normalize(encounter) {
   encounter.targets = indexedArray(encounter.targets);
   encounter.targets.forEach((target) => {
     target.id ||= randomID(); target.name ||= "New Target"; target.image ||= "icons/svg/mystery-man.svg";
-    target.description ??= ""; target.points = Number(target.points) || 0; target.goal = Math.max(0, Number(target.goal) || 0);
+    target.sourceUuid ??= ""; target.sourceType ??= ""; target.description ??= ""; target.points = Number(target.points) || 0; target.goal = Math.max(0, Number(target.goal) || 0);
     target.checks = indexedArray(target.checks);
     target.checks.forEach((check) => { check.id ||= randomID(); check.guidance ??= ""; check.dc = Math.max(0, Number(check.dc) || 0); });
   });
@@ -158,7 +158,46 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     const context = await super._prepareContext(options);
     const selected = new Set(this.encounter.participantIds);
     const actors = game.actors.filter((actor) => actor.type === "character").map((actor) => ({ id: actor.id, name: actor.name, image: actor.img, selected: selected.has(actor.id) }));
-    return { ...context, encounter: this.encounter, actors, typeLabels: TYPE_LABELS, checkChoices: Object.fromEntries(CHECK_CHOICES) };
+    const dropLabels = { social: "targets", research: "sources", chase: "obstacles", exploration: "locations", skill: "challenges" };
+    return { ...context, encounter: this.encounter, actors, typeLabels: TYPE_LABELS, checkChoices: Object.fromEntries(CHECK_CHOICES), dropLabel: dropLabels[this.encounter.type] };
+  }
+  async _onRender(context, options) {
+    await super._onRender(context, options);
+    const zone = this.element.querySelector("[data-target-drop-zone]");
+    if (!zone) return;
+    zone.addEventListener("dragenter", (event) => { event.preventDefault(); zone.classList.add("dragover"); });
+    zone.addEventListener("dragover", (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; zone.classList.add("dragover"); });
+    zone.addEventListener("dragleave", (event) => { if (!zone.contains(event.relatedTarget)) zone.classList.remove("dragover"); });
+    zone.addEventListener("drop", (event) => this._onTargetDrop(event));
+  }
+  async _onTargetDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.classList.remove("dragover");
+    let data = {};
+    try { data = TextEditor.getDragEventData(event); }
+    catch (_error) { try { data = JSON.parse(event.dataTransfer?.getData("text/plain") || "{}"); } catch (_parseError) { return; } }
+    let dropped = data.uuid ? await fromUuid(data.uuid) : null;
+    if (dropped?.documentName === "Token") dropped = dropped.actor;
+    if (!dropped && data.actorId) dropped = game.actors.get(data.actorId);
+    if (!dropped || !["Actor", "Item"].includes(dropped.documentName)) return ui.notifications.warn("Drop an Actor or Item from the sidebar.");
+    if (dropped.uuid && this.encounter.targets.some((target) => target.sourceUuid === dropped.uuid)) return ui.notifications.info(`${dropped.name} has already been added.`);
+
+    this._capture();
+    const created = newTarget(this.encounter.type);
+    created.sourceUuid = dropped.uuid || "";
+    created.sourceType = dropped.documentName;
+    created.name = dropped.name || created.name;
+    created.image = dropped.img || "icons/svg/mystery-man.svg";
+    const description = dropped.system?.description?.value ?? dropped.system?.details?.biography?.value ?? "";
+    if (description) {
+      const container = document.createElement("div");
+      container.innerHTML = description;
+      created.description = (container.textContent ?? "").trim();
+    }
+    this.encounter.targets.push(created);
+    ui.notifications.info(`Added ${created.name} from the ${dropped.documentName} directory.`);
+    await this.render({ force: true });
   }
   _capture() {
     const data = new foundry.applications.ux.FormDataExtended(this.element).object;

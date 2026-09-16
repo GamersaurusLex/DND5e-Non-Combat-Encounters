@@ -16,6 +16,11 @@
 .nce-participants { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .4rem; }
 .nce-participants label { display: flex; align-items: center; gap: .4rem; }
 .nce-participants img { width: 32px; height: 32px; object-fit: cover; border: 0; border-radius: 50%; }
+.nce-target-drop-zone { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .3rem; min-height: 100px; margin: .75rem 0 1rem; padding: 1rem; border: 3px dashed var(--color-border-light-2); border-radius: 14px; background: color-mix(in srgb, var(--color-bg-option, #222) 82%, transparent); text-align: center; transition: border-color .15s, background-color .15s, box-shadow .15s, transform .15s; }
+.nce-target-drop-zone > i { font-size: 1.8rem; opacity: .75; }
+.nce-target-drop-zone > strong { font-size: 1rem; text-transform: capitalize; }
+.nce-target-drop-zone > span { font-size: .8rem; opacity: .72; }
+.nce-target-drop-zone.dragover { border-color: var(--color-border-highlight); background: color-mix(in srgb, var(--nce-accent) 24%, var(--color-bg-option, #222)); box-shadow: 0 0 0 3px var(--color-shadow-highlight); transform: scale(1.005); }
 .nce-check { margin: .5rem 0; padding: .65rem; background: var(--nce-panel); border-radius: 6px; }
 .nce-check-row { display: grid; grid-template-columns: 1.2fr 1fr 100px 34px; gap: .4rem; align-items: center; }
 .nce-check-row label { display: flex; align-items: center; gap: .3rem; }
