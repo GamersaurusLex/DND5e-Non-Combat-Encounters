@@ -1,0 +1,7 @@
+<section class="nce-tracker">{{#if noEncounter}}<div class="nce-empty"><i class="fa-solid fa-people-group"></i><p>No active non-combat encounter.</p>{{#if isGM}}<button type="button" data-action="manage">Manage Encounters</button>{{/if}}</div>{{else}}
+  <header><img src="{{encounter.image}}" alt=""><div><h2>{{encounter.name}}</h2><p>{{typeLabel}} · {{encounter.status}}{{#if encounter.roundLimit}} · Round {{encounter.currentRound}} of {{encounter.roundLimit}}{{/if}}</p></div></header>
+  {{#if encounter.description}}<section><h3>Situation and Stakes</h3><p>{{encounter.description}}</p></section>{{/if}}
+  <section><h3>Participants</h3><ul class="nce-roster">{{#each participants}}<li><img src="{{image}}" alt="">{{name}}</li>{{else}}<li>No participants selected.</li>{{/each}}</ul></section>
+  <section><h3>Encounter Elements</h3>{{#each encounter.targets}}<article class="nce-tracker-target"><img src="{{image}}" alt=""><div><h4>{{name}}</h4>{{#if description}}<p>{{description}}</p>{{/if}}<div class="nce-progress"><span style="width: {{progressPct}}%"></span></div><small>{{points}}{{#if goal}} / {{goal}}{{/if}} points</small>{{#if checks.length}}<h5>Available Checks</h5><ul>{{#each checks}}<li><strong>{{label}} — DC {{dc}}</strong>{{#if guidance}}<p>{{guidance}}</p>{{/if}}</li>{{/each}}</ul>{{/if}}</div></article>{{/each}}</section>
+  {{#if isGM}}<footer><button type="button" data-action="manage"><i class="fa-solid fa-gear"></i> Manage Encounters</button></footer>{{/if}}
+{{/if}}</section>

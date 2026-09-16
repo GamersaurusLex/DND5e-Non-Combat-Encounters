@@ -1,0 +1,24 @@
+<div class="nce-editor">
+  <section class="content">
+    <fieldset><legend>Encounter</legend>
+      <div class="form-group"><label>Name</label><div class="form-fields"><input name="name" value="{{encounter.name}}"></div></div>
+      <div class="form-group"><label>Type</label><div class="form-fields"><select name="type">{{selectOptions typeLabels selected=encounter.type}}</select></div></div>
+      <div class="form-group"><label>Image</label><div class="form-fields"><file-picker type="image" name="image" value="{{encounter.image}}"></file-picker></div></div>
+      <label>Description and Stakes<textarea name="description">{{encounter.description}}</textarea></label>
+      <div class="form-group"><label>Current Round</label><div class="form-fields"><input type="number" min="1" name="currentRound" value="{{encounter.currentRound}}"><label>Round Limit</label><input type="number" min="0" name="roundLimit" value="{{encounter.roundLimit}}"></div></div>
+    </fieldset>
+    <fieldset><legend>Participating Characters</legend><div class="nce-participants">{{#each actors}}<label><input type="checkbox" name="participantIds" value="{{id}}" {{checked selected}}><img src="{{image}}" alt=""> {{name}}</label>{{else}}<p>No character Actors are available.</p>{{/each}}</div></fieldset>
+    <h2>Targets, Sources, Obstacles, or Challenges</h2>
+    {{#each encounter.targets}}<fieldset class="nce-target"><legend>{{name}}</legend>
+      <div class="form-group"><label>Name</label><div class="form-fields"><input name="targets.{{@index}}.name" value="{{name}}"></div></div>
+      <div class="form-group"><label>Image</label><div class="form-fields"><file-picker type="image" name="targets.{{@index}}.image" value="{{image}}"></file-picker></div></div>
+      <label>Description<textarea name="targets.{{@index}}.description">{{description}}</textarea></label>
+      <div class="form-group"><label>Current Points</label><div class="form-fields"><input type="number" name="targets.{{@index}}.points" value="{{points}}"><label>Goal</label><input type="number" min="0" name="targets.{{@index}}.goal" value="{{goal}}"></div></div>
+      <h3>Available Checks</h3>
+      {{#each checks}}<div class="nce-check"><div class="nce-check-row"><select name="targets.{{@../index}}.checks.{{@index}}.key">{{selectOptions @root.checkChoices selected=key}}</select><input name="targets.{{@../index}}.checks.{{@index}}.label" value="{{label}}" placeholder="Display label"><label>DC <input type="number" min="0" name="targets.{{@../index}}.checks.{{@index}}.dc" value="{{dc}}"></label><input type="hidden" name="targets.{{@../index}}.checks.{{@index}}.id" value="{{id}}"><button type="button" data-action="removeCheck" data-target-index="{{@../index}}" data-index="{{@index}}"><i class="fa-solid fa-trash"></i></button></div><label>Player Guidance<textarea name="targets.{{@../index}}.checks.{{@index}}.guidance" placeholder="Explain how this check applies here">{{guidance}}</textarea></label></div>{{/each}}
+      <div class="nce-card-actions"><button type="button" data-action="addCheck" data-target-index="{{@index}}"><i class="fa-solid fa-plus"></i> Add Check</button><button type="button" data-action="removeTarget" data-index="{{@index}}"><i class="fa-solid fa-trash"></i> Remove Target</button></div>
+    </fieldset>{{/each}}
+    <button type="button" data-action="addTarget"><i class="fa-solid fa-plus"></i> Add Target</button>
+  </section>
+  <footer class="form-footer"><button type="submit"><i class="fa-solid fa-floppy-disk"></i> Save Changes</button></footer>
+</div>
