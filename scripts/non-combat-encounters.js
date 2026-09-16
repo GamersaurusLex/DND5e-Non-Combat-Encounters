@@ -23,6 +23,12 @@ const TYPE_LABELS = {
 const clone = (value) => foundry.utils.deepClone(value);
 const randomID = () => foundry.utils.randomID();
 
+function indexedArray(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value).sort(([a], [b]) => Number(a) - Number(b)).map(([, entry]) => entry);
+}
+
 function newCheck() {
   return { id: randomID(), key: "skill:per", label: "Persuasion", dc: 15, guidance: "" };
 }
@@ -47,11 +53,11 @@ function normalize(encounter) {
   encounter.participantIds = Array.isArray(encounter.participantIds) ? encounter.participantIds : [];
   encounter.currentRound = Math.max(1, Number(encounter.currentRound) || 1);
   encounter.roundLimit = Math.max(0, Number(encounter.roundLimit) || 0);
-  encounter.targets = Array.isArray(encounter.targets) ? encounter.targets : [];
+  encounter.targets = indexedArray(encounter.targets);
   encounter.targets.forEach((target) => {
     target.id ||= randomID(); target.name ||= "New Target"; target.image ||= "icons/svg/mystery-man.svg";
     target.description ??= ""; target.points = Number(target.points) || 0; target.goal = Math.max(0, Number(target.goal) || 0);
-    target.checks = Array.isArray(target.checks) ? target.checks : [];
+    target.checks = indexedArray(target.checks);
     target.checks.forEach((check) => { check.id ||= randomID(); check.guidance ??= ""; check.dc = Math.max(0, Number(check.dc) || 0); });
   });
   return encounter;
@@ -86,7 +92,7 @@ class EncounterManager extends HandlebarsApplicationMixin(ApplicationV2) {
   async _prepareContext(options) {
     const context = await super._prepareContext(options);
     const activeId = Store.activeId();
-    return { ...context, isGM: game.user.isGM, encounters: Object.values(Store.all()).map(normalize).sort((a, b) => b.updatedAt - a.updatedAt).map((encounter) => ({ ...encounter, typeLabel: TYPE_LABELS[encounter.type], active: encounter.id === activeId })) };
+    return { ...context, isGM: game.user.isGM, activeEncounter: !!activeId, encounters: Object.values(Store.all()).map(normalize).sort((a, b) => b.updatedAt - a.updatedAt).map((encounter) => ({ ...encounter, typeLabel: TYPE_LABELS[encounter.type], active: encounter.id === activeId })) };
   }
   static async create() { const encounter = newEncounter(); await Store.save(encounter); new EncounterEditor(encounter).render({ force: true }); this.render({ force: true }); }
   static edit(_event, target) { new EncounterEditor(Store.get(target.dataset.id)).render({ force: true }); }
@@ -142,10 +148,11 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     if (encounter) encounter.targets = encounter.targets.map((target) => ({ ...target, progressPct: target.goal ? Math.min(100, Math.max(0, Math.round((target.points / target.goal) * 100))) : 0 }));
     return { ...context, encounter, participants, typeLabel: encounter ? TYPE_LABELS[encounter.type] : "", noEncounter: !encounter, isGM: game.user.isGM };
   }
-  static manage() { new EncounterManager().render({ force: true }); }
+  static manage() { manager.render({ force: true }); }
 }
 
 let tracker;
+let manager;
 Hooks.once("init", () => {
   game.settings.register(MODULE_ID, SETTINGS.encounters, { scope: "world", config: false, type: Object, default: {} });
   game.settings.register(MODULE_ID, SETTINGS.active, { scope: "world", config: false, type: String, default: "" });
@@ -153,10 +160,11 @@ Hooks.once("init", () => {
 
 Hooks.once("ready", () => {
   tracker = new EncounterTracker();
-  game[MODULE_ID] = { open: () => tracker.render(true), manage: () => new EncounterManager().render({ force: true }), Store };
+  manager = new EncounterManager();
+  game[MODULE_ID] = { open: () => tracker.render(true), manage: () => manager.render({ force: true }), Store };
 });
 
-Hooks.on("nonCombatEncounterUpdated", () => tracker?.render(false));
+Hooks.on("nonCombatEncounterUpdated", () => { tracker?.render(false); manager?.render(false); });
 Hooks.on("renderSceneControls", (_app, html) => {
   const root = html instanceof HTMLElement ? html : html?.[0]; const tools = root?.querySelector("#scene-controls-tools");
   if (!tools || tools.querySelector(".dnd5e-nce-control")) return;
