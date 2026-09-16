@@ -147,8 +147,8 @@ class EncounterManager extends HandlebarsApplicationMixin(ApplicationV2) {
 class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
   constructor(encounter, options = {}) { super(options); this.encounter = clone(encounter); }
   static DEFAULT_OPTIONS = {
-    id: "dnd5e-nce-editor", tag: "form", classes: ["dnd5e-nce", "standard-form"],
-    position: { width: 820, height: 760 }, window: { icon: "fa-solid fa-pen-to-square", resizable: true },
+    id: "dnd5e-nce-editor", tag: "form", classes: ["dnd5e-nce"],
+    position: { width: 820, height: 760 }, window: { icon: "fa-solid fa-pen-to-square", resizable: true, contentClasses: ["standard-form", "nce-editor"] },
     form: { closeOnSubmit: false, handler: EncounterEditor.submit },
     actions: { addTarget: EncounterEditor.addTarget, removeTarget: EncounterEditor.removeTarget, addCheck: EncounterEditor.addCheck, removeCheck: EncounterEditor.removeCheck }
   };
