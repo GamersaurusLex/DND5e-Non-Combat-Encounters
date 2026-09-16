@@ -10,3 +10,4 @@
 - Fixed indexed target/check persistence and live manager refresh behavior found during the first world test.
 - Added a dedicated right-sidebar encounter directory directly beneath Journal, with create, activate, open, edit, pause, resume, and delete controls for GMs and active-encounter access for players.
 - Added an editor drop zone that creates targets, research sources, obstacles, locations, or challenges from Actors and Items while retaining their Foundry UUID.
+- Made check display labels follow skill selections automatically unless the GM has deliberately entered a custom label.

@@ -23,6 +23,7 @@ const TYPE_LABELS = {
 const clone = (value) => foundry.utils.deepClone(value);
 const randomID = () => foundry.utils.randomID();
 const esc = (value) => foundry.utils.escapeHTML(String(value ?? ""));
+const checkLabelForKey = (key) => CHECK_CHOICES.find(([value]) => value === key)?.[1] ?? "Check";
 
 function indexedArray(value) {
   if (Array.isArray(value)) return value;
@@ -31,7 +32,7 @@ function indexedArray(value) {
 }
 
 function newCheck() {
-  return { id: randomID(), key: "skill:per", label: "Persuasion", dc: 15, guidance: "" };
+  return { id: randomID(), key: "skill:per", label: "Persuasion", labelModified: false, dc: 15, guidance: "" };
 }
 
 function newTarget(type = "social") {
@@ -59,7 +60,11 @@ function normalize(encounter) {
     target.id ||= randomID(); target.name ||= "New Target"; target.image ||= "icons/svg/mystery-man.svg";
     target.sourceUuid ??= ""; target.sourceType ??= ""; target.description ??= ""; target.points = Number(target.points) || 0; target.goal = Math.max(0, Number(target.goal) || 0);
     target.checks = indexedArray(target.checks);
-    target.checks.forEach((check) => { check.id ||= randomID(); check.guidance ??= ""; check.dc = Math.max(0, Number(check.dc) || 0); });
+    target.checks.forEach((check) => {
+      check.id ||= randomID(); check.key ||= "skill:per"; check.label ||= checkLabelForKey(check.key);
+      if (check.labelModified == null) check.labelModified = !CHECK_CHOICES.some(([, label]) => label === check.label);
+      check.guidance ??= ""; check.dc = Math.max(0, Number(check.dc) || 0);
+    });
   });
   return encounter;
 }
@@ -164,11 +169,25 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
   async _onRender(context, options) {
     await super._onRender(context, options);
     const zone = this.element.querySelector("[data-target-drop-zone]");
-    if (!zone) return;
-    zone.addEventListener("dragenter", (event) => { event.preventDefault(); zone.classList.add("dragover"); });
-    zone.addEventListener("dragover", (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; zone.classList.add("dragover"); });
-    zone.addEventListener("dragleave", (event) => { if (!zone.contains(event.relatedTarget)) zone.classList.remove("dragover"); });
-    zone.addEventListener("drop", (event) => this._onTargetDrop(event));
+    if (zone) {
+      zone.addEventListener("dragenter", (event) => { event.preventDefault(); zone.classList.add("dragover"); });
+      zone.addEventListener("dragover", (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; zone.classList.add("dragover"); });
+      zone.addEventListener("dragleave", (event) => { if (!zone.contains(event.relatedTarget)) zone.classList.remove("dragover"); });
+      zone.addEventListener("drop", (event) => this._onTargetDrop(event));
+    }
+    for (const row of this.element.querySelectorAll(".nce-check-row")) {
+      const select = row.querySelector('select[name$=".key"]');
+      const label = row.querySelector('input[name$=".label"]');
+      const modified = row.querySelector('input[name$=".labelModified"]');
+      if (label && select && modified?.value !== "true") label.value = select.selectedOptions[0]?.textContent?.trim() || checkLabelForKey(select.value);
+      select?.addEventListener("change", () => {
+        if (!label || modified?.value === "true") return;
+        label.value = select.selectedOptions[0]?.textContent?.trim() || checkLabelForKey(select.value);
+      });
+      label?.addEventListener("input", () => {
+        if (modified) modified.value = String(Boolean(label.value.trim()));
+      });
+    }
   }
   async _onTargetDrop(event) {
     event.preventDefault();
