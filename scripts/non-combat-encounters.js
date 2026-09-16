@@ -22,6 +22,7 @@ const TYPE_LABELS = {
 
 const clone = (value) => foundry.utils.deepClone(value);
 const randomID = () => foundry.utils.randomID();
+const esc = (value) => foundry.utils.escapeHTML(String(value ?? ""));
 
 function indexedArray(value) {
   if (Array.isArray(value)) return value;
@@ -82,6 +83,44 @@ const Store = {
   async setActive(id) { await game.settings.set(MODULE_ID, SETTINGS.active, id); Hooks.callAll("nonCombatEncounterUpdated", id); }
 };
 
+async function createEncounter() {
+  const encounter = newEncounter();
+  await Store.save(encounter);
+  new EncounterEditor(encounter).render({ force: true });
+}
+
+async function activateEncounter(id) {
+  const encounter = Store.get(id);
+  if (!encounter) return;
+  encounter.status = "active";
+  await Store.save(encounter);
+  await Store.setActive(encounter.id);
+  tracker.render(true);
+}
+
+async function pauseEncounter(id) {
+  const encounter = Store.get(id);
+  if (!encounter) return;
+  encounter.status = "paused";
+  await Store.save(encounter);
+  await Store.setActive(encounter.id);
+  tracker.render(false);
+}
+
+async function resumeEncounter(id) {
+  await activateEncounter(id);
+}
+
+async function deleteEncounter(id) {
+  const confirmed = await foundry.applications.api.DialogV2.confirm({
+    window: { title: "Delete Encounter" },
+    content: "<p>Delete this encounter permanently?</p>"
+  });
+  if (!confirmed) return;
+  await Store.remove(id);
+  tracker.render(false);
+}
+
 class EncounterManager extends HandlebarsApplicationMixin(ApplicationV2) {
   static DEFAULT_OPTIONS = {
     id: "dnd5e-nce-manager", tag: "form", classes: ["dnd5e-nce", "standard-form"],
@@ -94,15 +133,14 @@ class EncounterManager extends HandlebarsApplicationMixin(ApplicationV2) {
     const activeId = Store.activeId();
     return { ...context, isGM: game.user.isGM, activeEncounter: !!activeId, encounters: Object.values(Store.all()).map(normalize).sort((a, b) => b.updatedAt - a.updatedAt).map((encounter) => ({ ...encounter, typeLabel: TYPE_LABELS[encounter.type], active: encounter.id === activeId })) };
   }
-  static async create() { const encounter = newEncounter(); await Store.save(encounter); new EncounterEditor(encounter).render({ force: true }); this.render({ force: true }); }
+  static async create() { await createEncounter(); this.render({ force: true }); }
   static edit(_event, target) { new EncounterEditor(Store.get(target.dataset.id)).render({ force: true }); }
-  static async activate(_event, target) { const encounter = Store.get(target.dataset.id); encounter.status = "active"; await Store.save(encounter); await Store.setActive(encounter.id); tracker.render(true); this.render({ force: true }); }
-  static async pause(_event, target) { const encounter = Store.get(target.dataset.id); encounter.status = "paused"; await Store.save(encounter); this.render({ force: true }); tracker.render(false); }
-  static async resume(_event, target) { const encounter = Store.get(target.dataset.id); encounter.status = "active"; await Store.save(encounter); await Store.setActive(encounter.id); tracker.render(true); this.render({ force: true }); }
+  static async activate(_event, target) { await activateEncounter(target.dataset.id); this.render({ force: true }); }
+  static async pause(_event, target) { await pauseEncounter(target.dataset.id); this.render({ force: true }); }
+  static async resume(_event, target) { await resumeEncounter(target.dataset.id); this.render({ force: true }); }
   static open() { tracker.render(true); }
   static async remove(_event, target) {
-    if (!await foundry.applications.api.DialogV2.confirm({ window: { title: "Delete Encounter" }, content: "<p>Delete this encounter permanently?</p>" })) return;
-    await Store.remove(target.dataset.id); this.render({ force: true }); tracker.render(false);
+    await deleteEncounter(target.dataset.id); this.render({ force: true });
   }
 }
 
@@ -153,6 +191,109 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
 
 let tracker;
 let manager;
+const SIDEBAR_TAB = `${MODULE_ID}-sidebar-tab`;
+
+function activateEncounterSidebar() {
+  const sidebar = document.getElementById("sidebar");
+  const content = sidebar?.querySelector("#sidebar-content");
+  if (!sidebar || !content) return;
+  sidebar.querySelectorAll("#sidebar-tabs [data-tab]").forEach((button) => {
+    const active = button.dataset.tab === SIDEBAR_TAB;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  content.querySelectorAll(":scope > .tab").forEach((section) => {
+    const active = section.id === SIDEBAR_TAB;
+    section.classList.toggle("active", active);
+    section.hidden = !active;
+  });
+  content.classList.add("active-dnd5e-nce", "expanded");
+}
+
+function sidebarEncounterEntry(encounter, activeId) {
+  const isCurrent = encounter.id === activeId;
+  const statusIcon = encounter.status === "active" ? "fa-play" : encounter.status === "paused" ? "fa-pause" : "fa-file-pen";
+  const primary = encounter.status === "active"
+    ? '<button type="button" data-nce-action="open"><i class="fa-solid fa-up-right-from-square"></i> Open</button><button type="button" data-nce-action="pause"><i class="fa-solid fa-pause"></i> Pause</button>'
+    : encounter.status === "paused"
+      ? '<button type="button" data-nce-action="resume"><i class="fa-solid fa-play"></i> Resume</button>'
+      : '<button type="button" data-nce-action="activate"><i class="fa-solid fa-play"></i> Activate</button>';
+  return `<li class="dnd5e-nce-sidebar-entry ${isCurrent ? "current" : ""}" data-id="${esc(encounter.id)}">
+    <img src="${esc(encounter.image)}" alt="">
+    <div class="entry-summary"><strong>${esc(encounter.name)}</strong><span><i class="fa-solid ${statusIcon}"></i> ${esc(TYPE_LABELS[encounter.type])} — ${esc(encounter.status)}</span></div>
+    <div class="entry-actions">${primary}<button type="button" data-nce-action="edit"><i class="fa-solid fa-pen-to-square"></i> Edit</button><button type="button" class="danger" data-nce-action="remove" aria-label="Delete ${esc(encounter.name)}" data-tooltip="Delete"><i class="fa-solid fa-trash"></i></button></div>
+  </li>`;
+}
+
+async function handleEncounterSidebarAction(event) {
+  const button = event.target.closest("[data-nce-action]");
+  if (!button) return;
+  const action = button.dataset.nceAction;
+  const id = button.closest("[data-id]")?.dataset.id;
+  if (action === "create") await createEncounter();
+  else if (action === "edit") new EncounterEditor(Store.get(id)).render({ force: true });
+  else if (action === "activate") await activateEncounter(id);
+  else if (action === "pause") await pauseEncounter(id);
+  else if (action === "resume") await resumeEncounter(id);
+  else if (action === "open") tracker.render(true);
+  else if (action === "remove") await deleteEncounter(id);
+}
+
+function renderEncounterSidebar() {
+  const sidebar = document.getElementById("sidebar");
+  const tabsMenu = sidebar?.querySelector("#sidebar-tabs > menu");
+  const content = sidebar?.querySelector("#sidebar-content");
+  if (!tabsMenu || !content) return;
+
+  if (!tabsMenu.dataset.dnd5eNceBound) {
+    tabsMenu.dataset.dnd5eNceBound = "true";
+    tabsMenu.addEventListener("click", (event) => {
+      const selected = event.target.closest("button[data-tab]")?.dataset.tab;
+      if (!selected || selected === SIDEBAR_TAB) return;
+      const panel = document.getElementById(SIDEBAR_TAB);
+      if (panel) { panel.classList.remove("active"); panel.hidden = true; }
+      tabsMenu.querySelector(`[data-tab="${SIDEBAR_TAB}"]`)?.classList.remove("active");
+      content.classList.remove("active-dnd5e-nce");
+      const selectedPanel = content.querySelector(`:scope > #${CSS.escape(selected)}`);
+      selectedPanel?.classList.add("active");
+      if (selectedPanel) selectedPanel.hidden = false;
+    });
+  }
+
+  let tabButton = tabsMenu.querySelector(`[data-tab="${SIDEBAR_TAB}"]`);
+  if (!tabButton) {
+    const item = document.createElement("li");
+    item.className = "dnd5e-nce-sidebar-tab-item";
+    item.innerHTML = `<button type="button" class="ui-control plain icon fa-solid fa-people-group" data-tab="${SIDEBAR_TAB}" role="tab" aria-pressed="false" aria-label="Non-Combat Encounters" data-tooltip="Non-Combat Encounters"></button><div class="notification-pip"></div>`;
+    tabButton = item.querySelector("button");
+    tabButton.addEventListener("click", activateEncounterSidebar);
+    const journalButton = tabsMenu.querySelector('[data-tab="journal"]');
+    const journalItem = journalButton?.closest("li");
+    if (journalItem) journalItem.after(item);
+    else tabsMenu.append(item);
+  }
+
+  let panel = document.getElementById(SIDEBAR_TAB);
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.id = SIDEBAR_TAB;
+    panel.className = "tab sidebar-tab flexcol dnd5e-nce-sidebar";
+    panel.hidden = true;
+    content.append(panel);
+  }
+
+  const encounters = Object.values(Store.all()).map(normalize).sort((a, b) => b.updatedAt - a.updatedAt);
+  if (game.user.isGM) {
+    panel.innerHTML = `<header class="dnd5e-nce-sidebar-header"><h2>Non-Combat Encounters</h2><button type="button" data-nce-action="create"><i class="fa-solid fa-file-circle-plus"></i> Create Encounter</button></header><ol class="dnd5e-nce-sidebar-list">${encounters.map((entry) => sidebarEncounterEntry(entry, Store.activeId())).join("") || '<li class="empty">No encounters created yet.</li>'}</ol>`;
+  } else {
+    const encounter = Store.get();
+    panel.innerHTML = encounter
+      ? `<header class="dnd5e-nce-sidebar-header"><h2>${esc(encounter.name)}</h2></header><div class="dnd5e-nce-sidebar-player"><img src="${esc(encounter.image)}" alt=""><p>${esc(TYPE_LABELS[encounter.type])} — ${esc(encounter.status)}</p><button type="button" data-nce-action="open"><i class="fa-solid fa-up-right-from-square"></i> Open Encounter</button></div>`
+      : '<div class="dnd5e-nce-sidebar-player"><p>No active encounter.</p></div>';
+  }
+  panel.onclick = handleEncounterSidebarAction;
+}
+
 Hooks.once("init", () => {
   game.settings.register(MODULE_ID, SETTINGS.encounters, { scope: "world", config: false, type: Object, default: {} });
   game.settings.register(MODULE_ID, SETTINGS.active, { scope: "world", config: false, type: String, default: "" });
@@ -162,9 +303,11 @@ Hooks.once("ready", () => {
   tracker = new EncounterTracker();
   manager = new EncounterManager();
   game[MODULE_ID] = { open: () => tracker.render(true), manage: () => manager.render({ force: true }), Store };
+  renderEncounterSidebar();
 });
 
-Hooks.on("nonCombatEncounterUpdated", () => { tracker?.render(false); manager?.render(false); });
+Hooks.on("nonCombatEncounterUpdated", () => { tracker?.render(false); manager?.render(false); renderEncounterSidebar(); });
+Hooks.on("renderSidebar", renderEncounterSidebar);
 Hooks.on("renderSceneControls", (_app, html) => {
   const root = html instanceof HTMLElement ? html : html?.[0]; const tools = root?.querySelector("#scene-controls-tools");
   if (!tools || tools.querySelector(".dnd5e-nce-control")) return;

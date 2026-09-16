@@ -8,3 +8,4 @@
 - Added D&D ability, skill, and saving-throw configuration with per-check guidance.
 - Verified installation and the create, save, and activate workflow against D&D 5e 6.0.2 on Foundry 14.367.
 - Fixed indexed target/check persistence and live manager refresh behavior found during the first world test.
+- Added a dedicated right-sidebar encounter directory directly beneath Journal, with create, activate, open, edit, pause, resume, and delete controls for GMs and active-encounter access for players.
