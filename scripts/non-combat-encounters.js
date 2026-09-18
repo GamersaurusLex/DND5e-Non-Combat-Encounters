@@ -77,7 +77,7 @@ function newEncounter() {
     id, name: "New Non-Combat Encounter", type: "social", status: "draft",
     schemaVersion: SCHEMA_VERSION, image: "icons/svg/d20-black.svg", description: "", participantIds: [],
     currentRound: 1, roundLimit: 0, targets: [newTarget("social")], activeActorId: "", activeTargetId: "",
-    actorsActed: {}, pendingRequests: [], log: [], history: [], dcVisibility: "hidden", criticalMode: "none", participantNicknames: {}, showProgressClocks: false,
+    actorsActed: {}, pendingRequests: [], log: [], history: [], dcVisibility: "hidden", criticalMode: "none", participantNicknames: {}, showProgressClocks: false, autoAdvance: true,
     research: { intervalHours: 4, pointMode: "shared" },
     chase: { quarryName: "The Quarry", quarryImage: "icons/svg/mystery-man.svg", quarryUuid: "", quarryPosition: 1, startPosition: 1, pace: 1, turnOrder: "before", scriptedQuarry: false, exhaustionMode: "2024", exhaustionByActor: {}, concluded: false, outcome: "", victoryText: "You caught the quarry!", escapeText: "The quarry escaped.", conclusionText: "The chase concludes." },
     createdAt: Date.now(), updatedAt: Date.now()
@@ -101,6 +101,7 @@ function normalize(encounter) {
   encounter.criticalMode = ["none", "margin5"].includes(encounter.criticalMode) ? encounter.criticalMode : "none";
   encounter.participantNicknames = encounter.participantNicknames && typeof encounter.participantNicknames === "object" ? encounter.participantNicknames : {};
   encounter.showProgressClocks = !!encounter.showProgressClocks;
+  encounter.autoAdvance = encounter.autoAdvance !== false && encounter.autoAdvance !== "false";
   encounter.research = encounter.research && typeof encounter.research === "object" ? encounter.research : {};
   encounter.research.intervalHours = Math.max(1, Number(encounter.research.intervalHours) || 4);
   encounter.research.pointMode = encounter.research.pointMode === "individual" ? "individual" : "shared";
@@ -221,6 +222,22 @@ function advanceChaseRound(encounter) {
   if (!isChase(encounter) || encounter.chase.concluded) return;
   advanceQuarry(encounter);
   if (!encounter.chase.scriptedQuarry && encounter.chase.quarryPosition >= encounter.targets.length && encounter.chase.partyPosition < encounter.targets.length) concludeChase(encounter, "escape");
+  encounter.currentRound += 1;
+  encounter.actorsActed = {};
+  for (const request of encounter.pendingRequests) if (request.status === "pending") request.status = "cancelled";
+  addLog(encounter, "round", `Advanced to round ${encounter.currentRound}.`);
+}
+
+function eligibleRoundParticipants(encounter) {
+  return (encounter?.participantIds ?? []).filter((actorId) => !isChase(encounter) || !isChaseDropout(encounter, actorId));
+}
+
+function allEligibleParticipantsActed(encounter) {
+  const eligible = eligibleRoundParticipants(encounter);
+  return eligible.length > 0 && eligible.every((actorId) => encounter.actorsActed[actorId]);
+}
+
+function advanceStandardRound(encounter) {
   encounter.currentRound += 1;
   encounter.actorsActed = {};
   for (const request of encounter.pendingRequests) if (request.status === "pending") request.status = "cancelled";
@@ -677,6 +694,7 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     this.encounter.participantIds = [...this.element.querySelectorAll('[name="participantIds"]:checked')].map((input) => input.value);
     for (const actor of game.actors.filter((entry) => entry.type === "character")) this.encounter.participantNicknames[actor.id] = this.element.querySelector(`[name="participantNicknames.${actor.id}"]`)?.value.trim() ?? "";
     this.encounter.showProgressClocks = this.element.querySelector('[name="showProgressClocks"]')?.checked ?? false;
+    this.encounter.autoAdvance = this.element.querySelector('[name="autoAdvance"]')?.checked ?? true;
     if (this.encounter.type === "chase") this.encounter.chase.scriptedQuarry = this.element.querySelector('[name="chase.scriptedQuarry"]')?.checked ?? false;
     this._captureTargetOptions();
     normalize(this.encounter);
@@ -715,6 +733,7 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     this.encounter.participantIds = [...this.element.querySelectorAll('[name="participantIds"]:checked')].map((input) => input.value);
     for (const actor of game.actors.filter((entry) => entry.type === "character")) this.encounter.participantNicknames[actor.id] = this.element.querySelector(`[name="participantNicknames.${actor.id}"]`)?.value.trim() ?? "";
     this.encounter.showProgressClocks = this.element.querySelector('[name="showProgressClocks"]')?.checked ?? false;
+    this.encounter.autoAdvance = this.element.querySelector('[name="autoAdvance"]')?.checked ?? true;
     if (this.encounter.type === "chase") this.encounter.chase.scriptedQuarry = this.element.querySelector('[name="chase.scriptedQuarry"]')?.checked ?? false;
     this._captureTargetOptions();
     normalize(this.encounter);
@@ -960,10 +979,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
         chaseOutcome = encounter.chase.outcome;
         return;
       }
-      encounter.currentRound += 1;
-      encounter.actorsActed = {};
-      for (const request of encounter.pendingRequests) if (request.status === "pending") request.status = "cancelled";
-      addLog(encounter, "round", `Advanced to round ${encounter.currentRound}.`);
+      advanceStandardRound(encounter);
     });
     if (chaseMoved) await postChaseUpdate("The quarry is getting farther ahead.", "lost");
     if (chaseOutcome) await postChaseOutcome(Store.get(), chaseOutcome);
@@ -1049,14 +1065,13 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
           }
           partyCaughtUp = current.chase.quarryPosition - current.chase.partyPosition < gapBefore;
         }
-        const eligible = current.participantIds.filter((actorId) => !isChaseDropout(current, actorId));
-        if (!current.chase.concluded && eligible.length && eligible.every((actorId) => current.actorsActed[actorId])) {
+        if (!current.chase.concluded && current.autoAdvance && allEligibleParticipantsActed(current)) {
           const quarryBefore = current.chase.quarryPosition;
           advanceChaseRound(current);
           quarryMoved = current.chase.quarryPosition > quarryBefore;
           if (current.chase.concluded) chaseOutcome = current.chase.outcome;
         }
-      }
+      } else if (current.autoAdvance && allEligibleParticipantsActed(current)) advanceStandardRound(current);
     });
     await postResultCard(encounter, result, choice);
     const updated = Store.get();
