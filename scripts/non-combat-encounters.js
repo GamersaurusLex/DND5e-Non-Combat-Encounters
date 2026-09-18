@@ -460,9 +460,36 @@ async function migrateEncounters() {
   }
 }
 
-function createEncounter() {
-  const encounter = newEncounter();
-  new EncounterEditor(encounter).render({ force: true });
+async function createEncounter(event) {
+  const content = document.createElement("div");
+  content.innerHTML = await foundry.applications.handlebars.renderTemplate("templates/sidebar/document-create.html", {
+    name: "",
+    defaultName: "New Non-Combat Encounter",
+    hasFolders: false,
+    hasTypes: true,
+    type: "social",
+    types: Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label })),
+    typeHint: ""
+  });
+  return foundry.applications.api.DialogV2.prompt({
+    content,
+    window: { title: "Create Encounter" },
+    position: { width: 320, left: window.innerWidth - 630, top: event?.currentTarget?.offsetTop ?? 0 },
+    ok: {
+      label: "Create Encounter",
+      callback: async (_event, button) => {
+        const data = new foundry.applications.ux.FormDataExtended(button.form).object;
+        const type = TYPE_LABELS[data.type] ? data.type : "social";
+        const encounter = newEncounter();
+        encounter.type = type;
+        encounter.name = String(data.name ?? "").trim() || "New Non-Combat Encounter";
+        encounter.targets = [newTarget(type)];
+        normalize(encounter);
+        new EncounterEditor(encounter).render({ force: true });
+        return true;
+      }
+    }
+  });
 }
 
 async function activateEncounter(id) {
@@ -603,7 +630,7 @@ class EncounterManager extends HandlebarsApplicationMixin(ApplicationV2) {
     const activeId = Store.activeId();
     return { ...context, isGM: game.user.isGM, activeEncounter: !!activeId, encounters: Object.values(Store.all()).map(normalize).sort((a, b) => b.updatedAt - a.updatedAt).map((encounter) => ({ ...encounter, typeLabel: TYPE_LABELS[encounter.type], active: encounter.id === activeId })) };
   }
-  static async create() { await createEncounter(); this.render({ force: true }); }
+  static async create(event) { if (await createEncounter(event)) this.render({ force: true }); }
   static edit(_event, target) { new EncounterEditor(Store.get(target.dataset.id)).render({ force: true }); }
   static async activate(_event, target) { await activateEncounter(target.dataset.id); this.render({ force: true }); }
   static async pause(_event, target) { await pauseEncounter(target.dataset.id); this.render({ force: true }); }
@@ -1202,7 +1229,7 @@ async function handleEncounterSidebarAction(event) {
   if (!button) return;
   const action = button.dataset.nceAction;
   const id = button.closest("[data-id]")?.dataset.id;
-  if (action === "create") await createEncounter();
+  if (action === "create") await createEncounter(event);
   else if (action === "edit") new EncounterEditor(Store.get(id)).render({ force: true });
   else if (action === "activate") await activateEncounter(id);
   else if (action === "pause") await pauseEncounter(id);
