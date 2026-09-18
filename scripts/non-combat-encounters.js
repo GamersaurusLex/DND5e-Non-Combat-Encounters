@@ -618,6 +618,86 @@ async function deleteEncounter(id) {
   tracker.render(false);
 }
 
+function uniqueEncounterName(preferredName, suffix = "Copy") {
+  const names = new Set(Object.values(Store.all()).map((entry) => String(entry.name).toLowerCase()));
+  if (!names.has(preferredName.toLowerCase())) return preferredName;
+  let name = `${preferredName} (${suffix})`;
+  let number = 2;
+  while (names.has(name.toLowerCase())) name = `${preferredName} (${suffix} ${number++})`;
+  return name;
+}
+
+async function duplicateEncounterAsDraft(id) {
+  const source = Store.get(id);
+  if (!source) return;
+  const duplicate = clone(source);
+  Object.assign(duplicate, {
+    id: randomID(), name: uniqueEncounterName(source.name), status: "draft", currentRound: 1,
+    activeActorId: "", activeTargetId: "", actorsActed: {}, pendingRequests: [], log: [], history: []
+  });
+  duplicate.targets.forEach((target) => {
+    target.points = 0;
+    target.exhausted = false;
+    target.researchPointsByActor = {};
+    target.thresholds.forEach((threshold) => threshold.rewards.forEach((reward) => {
+      reward.active = reward.activation !== "manual";
+      reward.remaining = reward.uses;
+      reward.applied = false;
+    }));
+  });
+  resetChase(duplicate);
+  normalize(duplicate);
+  await Store.save(duplicate);
+  renderEncounterSidebar();
+  ui.notifications.info(`Created ${duplicate.name} as a draft.`);
+}
+
+function exportEncounterData(id) {
+  const encounter = Store.get(id);
+  if (!encounter) return ui.notifications.error("That encounter no longer exists.");
+  saveDataToFile(JSON.stringify({ type: "dnd5e-non-combat-encounter", version: 1, encounter }, null, 2), "application/json", `${encounter.name.slugify() || "non-combat-encounter"}.json`);
+}
+
+function importEncounterData() {
+  if (!game.user.isGM) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".json,application/json";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const source = parsed?.type === "dnd5e-non-combat-encounter" ? parsed.encounter : parsed;
+      if (!source || typeof source !== "object" || Array.isArray(source) || typeof source.name !== "string") throw new Error("The selected file is not a Non-Combat Encounter export.");
+      const imported = normalize(clone(source));
+      Object.assign(imported, {
+        id: randomID(), name: uniqueEncounterName(imported.name, "Imported"), status: "draft", currentRound: 1,
+        activeActorId: "", activeTargetId: "", actorsActed: {}, pendingRequests: [], log: [], history: []
+      });
+      imported.targets.forEach((target) => {
+        target.points = 0;
+        target.exhausted = false;
+        target.researchPointsByActor = {};
+        target.thresholds.forEach((threshold) => threshold.rewards.forEach((reward) => {
+          reward.active = reward.activation !== "manual";
+          reward.remaining = reward.uses;
+          reward.applied = false;
+        }));
+      });
+      resetChase(imported);
+      normalize(imported);
+      await Store.save(imported);
+      renderEncounterSidebar();
+      ui.notifications.info(`Imported ${imported.name} as a draft.`);
+    } catch (error) {
+      console.error(`${MODULE_ID} | Failed to import encounter`, error);
+      ui.notifications.error(error.message || "Could not import that encounter file.");
+    }
+  }, { once: true });
+  input.click();
+}
+
 class EncounterManager extends HandlebarsApplicationMixin(ApplicationV2) {
   static DEFAULT_OPTIONS = {
     id: "dnd5e-nce-manager", tag: "form", classes: ["dnd5e-nce", "standard-form"],
@@ -1210,17 +1290,11 @@ function activateEncounterSidebar() {
 }
 
 function sidebarEncounterEntry(encounter, activeId) {
-  const isCurrent = encounter.id === activeId;
-  const statusIcon = encounter.status === "active" ? "fa-play" : encounter.status === "paused" ? "fa-pause" : "fa-file-pen";
-  const primary = encounter.status === "active"
-    ? '<button type="button" data-nce-action="open"><i class="fa-solid fa-up-right-from-square"></i> Open</button><button type="button" data-nce-action="pause"><i class="fa-solid fa-pause"></i> Pause</button>'
-    : encounter.status === "paused"
-      ? '<button type="button" data-nce-action="resume"><i class="fa-solid fa-play"></i> Resume</button>'
-      : '<button type="button" data-nce-action="activate"><i class="fa-solid fa-play"></i> Activate</button>';
-  return `<li class="dnd5e-nce-sidebar-entry ${isCurrent ? "current" : ""}" data-id="${esc(encounter.id)}">
-    <img src="${esc(encounter.image)}" alt="">
-    <div class="entry-summary"><strong>${esc(encounter.name)}</strong><span><i class="fa-solid ${statusIcon}"></i> ${esc(TYPE_LABELS[encounter.type])} — ${esc(encounter.status)}</span></div>
-    <div class="entry-actions">${primary}<button type="button" data-nce-action="edit"><i class="fa-solid fa-pen-to-square"></i> Edit</button><button type="button" class="danger" data-nce-action="remove" aria-label="Delete ${esc(encounter.name)}" data-tooltip="Delete"><i class="fa-solid fa-trash"></i></button></div>
+  const active = encounter.id === activeId && encounter.status === "active";
+  return `<li class="directory-item document dnd5e-nce-sidebar-entry ${active ? "active" : ""}" data-id="${esc(encounter.id)}" tabindex="0">
+    <img class="thumbnail" src="${esc(encounter.image)}" alt="">
+    <a class="document-name ellipsis">${esc(encounter.name)}</a>
+    ${active ? '<i class="fa-solid fa-play dnd5e-nce-active-marker" data-tooltip="Active Encounter"></i>' : ""}
   </li>`;
 }
 
@@ -1236,6 +1310,68 @@ async function handleEncounterSidebarAction(event) {
   else if (action === "resume") await resumeEncounter(id);
   else if (action === "open") tracker.render(true);
   else if (action === "remove") await deleteEncounter(id);
+}
+
+function closeEncounterContextMenu() {
+  document.getElementById("dnd5e-nce-context-menu")?.remove();
+}
+
+function openSidebarEncounter(id) {
+  const encounter = Store.get(id);
+  if (!encounter) return;
+  return id === Store.activeId() && encounter.status === "active"
+    ? tracker.render(true)
+    : new EncounterEditor(encounter).render({ force: true });
+}
+
+function showEncounterContextMenu(event, id) {
+  const encounter = Store.get(id);
+  if (!game.user.isGM || !encounter) return;
+  closeEncounterContextMenu();
+  const menu = document.createElement("nav");
+  menu.id = "dnd5e-nce-context-menu";
+  menu.className = "dnd5e-nce-context-menu";
+  const lifecycle = encounter.status === "active"
+    ? '<button type="button" data-context-action="pause"><i class="fa-solid fa-pause"></i> Pause</button>'
+    : encounter.status === "paused"
+      ? '<button type="button" data-context-action="resume"><i class="fa-solid fa-play"></i> Resume</button>'
+      : '<button type="button" data-context-action="activate"><i class="fa-solid fa-play"></i> Activate</button>';
+  menu.innerHTML = `<button type="button" data-context-action="edit"><i class="fa-solid fa-pen"></i> Edit</button>${lifecycle}<button type="button" data-context-action="duplicate"><i class="fa-solid fa-copy"></i> Duplicate as Draft</button><hr><button type="button" data-context-action="import"><i class="fa-solid fa-file-import"></i> Import Data</button><button type="button" data-context-action="export"><i class="fa-solid fa-file-export"></i> Export Data</button><hr><button type="button" data-context-action="delete"><i class="fa-solid fa-trash"></i> Delete</button>`;
+  document.body.append(menu);
+  const bounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(event.clientX, window.innerWidth - bounds.width - 8)}px`;
+  menu.style.top = `${Math.min(event.clientY, window.innerHeight - bounds.height - 8)}px`;
+  menu.querySelectorAll("[data-context-action]").forEach((button) => button.addEventListener("click", async () => {
+    const action = button.dataset.contextAction;
+    closeEncounterContextMenu();
+    if (action === "edit") new EncounterEditor(Store.get(id)).render({ force: true });
+    else if (action === "activate") await activateEncounter(id);
+    else if (action === "pause") await pauseEncounter(id);
+    else if (action === "resume") await resumeEncounter(id);
+    else if (action === "duplicate") await duplicateEncounterAsDraft(id);
+    else if (action === "import") importEncounterData();
+    else if (action === "export") exportEncounterData(id);
+    else if (action === "delete") await deleteEncounter(id);
+  }));
+  setTimeout(() => {
+    document.addEventListener("pointerdown", (pointerEvent) => {
+      if (!menu.contains(pointerEvent.target)) closeEncounterContextMenu();
+    }, { once: true });
+    document.addEventListener("keydown", closeEncounterContextMenu, { once: true });
+  }, 0);
+}
+
+function activateEncounterDirectoryListeners(panel) {
+  panel.querySelectorAll(".dnd5e-nce-sidebar-entry").forEach((entry) => {
+    const open = () => openSidebarEncounter(entry.dataset.id);
+    entry.addEventListener("click", open);
+    entry.addEventListener("keydown", (event) => { if (event.key === "Enter") open(); });
+    entry.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      showEncounterContextMenu(event, entry.dataset.id);
+    });
+  });
 }
 
 function renderEncounterSidebar() {
@@ -1285,8 +1421,11 @@ function renderEncounterSidebar() {
 
   const encounters = Object.values(Store.all()).map(normalize).sort((a, b) => b.updatedAt - a.updatedAt);
   if (game.user.isGM) {
-    panel.innerHTML = `<header class="dnd5e-nce-sidebar-header"><h2>Non-Combat Encounters</h2><button type="button" data-nce-action="create"><i class="fa-solid fa-file-circle-plus"></i> Create Encounter</button></header><ol class="dnd5e-nce-sidebar-list">${encounters.map((entry) => sidebarEncounterEntry(entry, Store.activeId())).join("") || '<li class="empty">No encounters created yet.</li>'}</ol>`;
+    panel.classList.add("directory");
+    panel.innerHTML = `<header class="directory-header"><div class="header-actions action-buttons flexrow"><button type="button" data-nce-action="create"><i class="fa-solid fa-file-circle-plus"></i> Create Encounter</button></div></header><ol class="directory-list plain dnd5e-nce-sidebar-list">${encounters.map((entry) => sidebarEncounterEntry(entry, Store.activeId())).join("") || '<li class="directory-item"><p class="hint">No encounters created yet.</p></li>'}</ol>`;
+    activateEncounterDirectoryListeners(panel);
   } else {
+    panel.classList.remove("directory");
     const encounter = Store.get();
     panel.innerHTML = encounter
       ? `<header class="dnd5e-nce-sidebar-header"><h2>${esc(encounter.name)}</h2></header><div class="dnd5e-nce-sidebar-player"><img src="${esc(encounter.image)}" alt=""><p>${esc(TYPE_LABELS[encounter.type])} — ${esc(encounter.status)}</p><button type="button" data-nce-action="open"><i class="fa-solid fa-up-right-from-square"></i> Open Encounter</button></div>`
