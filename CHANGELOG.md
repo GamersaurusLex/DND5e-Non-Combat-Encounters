@@ -12,6 +12,8 @@
 - Added actor modifiers to available checks and pending requests, including proficiency and expertise calculated by D&D5e.
 - Added GM roll confirmation with normal, advantage, disadvantage, situational modifiers, notes, and roll visibility.
 - Added DC adjudication, optional ±5 critical outcomes, styled result cards, and complete roll audit details.
+- Completed the first Social Encounter vertical slice with nicknames, background/appearance/personality notes, cinematic portraits, optional target clocks, configurable point awards, thresholds, and player-visible rewards.
+- Added weaknesses, resistances, circumstances, conditional and limited-use modifiers, cross-target point rewards, GM-controlled reward activation, and threshold gain/loss chat notices.
 
 ## 0.0.1 — 2026-09-16
 
