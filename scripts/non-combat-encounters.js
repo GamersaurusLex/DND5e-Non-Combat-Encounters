@@ -163,9 +163,8 @@ async function migrateEncounters() {
   }
 }
 
-async function createEncounter() {
+function createEncounter() {
   const encounter = newEncounter();
-  await Store.save(encounter);
   new EncounterEditor(encounter).render({ force: true });
 }
 

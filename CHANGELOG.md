@@ -6,6 +6,7 @@
 - Added the shared runtime foundation: authoritative GM persistence, socket synchronization, reconnect recovery, automatic encounter opening, participant ownership validation, actor/target selection, acted-state tracking, rounds, persistent check requests, manual points, logs, complete-state undo, pause/resume, and End & Publish.
 - Added player-safe encounter payloads that omit undo history, pending GM requests, and hidden DC values.
 - Added configurable hidden, relative, or exact player DC visibility.
+- Fixed Create Encounter persisting an empty draft before its editor was saved; closing a brand-new editor now discards the unsaved encounter.
 
 ## 0.0.1 — 2026-09-16
 
