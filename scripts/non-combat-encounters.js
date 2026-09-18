@@ -1,7 +1,7 @@
 const MODULE_ID = "dnd5e-non-combat-encounters";
 const SETTINGS = { encounters: "encounters", active: "activeEncounter" };
 const SOCKET = `module.${MODULE_ID}`;
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const MAX_HISTORY = 30;
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -49,7 +49,7 @@ function indexedArray(value) {
 }
 
 function newCheck() {
-  return { id: randomID(), key: "skill:per", label: "Persuasion", labelModified: false, dc: 15, guidance: "", successPoints: 1, criticalSuccessPoints: 2, failurePoints: 0, criticalFailurePoints: -1 };
+  return { id: randomID(), key: "skill:prc", label: "Perception", labelModified: false, dc: 15, guidance: "", successPoints: 1, criticalSuccessPoints: 2, failurePoints: 0, criticalFailurePoints: -1 };
 }
 
 function newSocialModifier(kind = "circumstance") {
@@ -68,7 +68,7 @@ function newThreshold(targetId = "") {
 function newTarget(type = "social") {
   const names = { social: "New NPC", research: "New Source", chase: "New Obstacle", exploration: "New Location", skill: "New Challenge" };
   const id = randomID();
-  return { id, sourceUuid: "", sourceType: "", name: names[type], nickname: "", image: "icons/svg/mystery-man.svg", description: "", background: "", appearance: "", personality: "", gmNotes: "", playerNotes: "", points: 0, goal: 4, checks: [newCheck()], modifiers: [], thresholds: [newThreshold(id)] };
+  return { id, sourceUuid: "", sourceType: "", name: names[type], nickname: "", image: "icons/svg/mystery-man.svg", description: "", background: "", appearance: "", personality: "", gmNotes: "", playerNotes: "", points: 0, goal: 4, checks: [newCheck()], modifiers: [], thresholds: [newThreshold(id)], hidden: false, exhausted: false, availabilityByActor: {}, maxPointsByActor: {}, researchPointsByActor: {} };
 }
 
 function newEncounter() {
@@ -78,6 +78,7 @@ function newEncounter() {
     schemaVersion: SCHEMA_VERSION, image: "icons/svg/d20-black.svg", description: "", participantIds: [],
     currentRound: 1, roundLimit: 0, targets: [newTarget("social")], activeActorId: "", activeTargetId: "",
     actorsActed: {}, pendingRequests: [], log: [], history: [], dcVisibility: "hidden", criticalMode: "none", participantNicknames: {}, showProgressClocks: false,
+    research: { intervalHours: 4, pointMode: "shared" },
     createdAt: Date.now(), updatedAt: Date.now()
   };
 }
@@ -99,10 +100,19 @@ function normalize(encounter) {
   encounter.criticalMode = ["none", "margin5"].includes(encounter.criticalMode) ? encounter.criticalMode : "none";
   encounter.participantNicknames = encounter.participantNicknames && typeof encounter.participantNicknames === "object" ? encounter.participantNicknames : {};
   encounter.showProgressClocks = !!encounter.showProgressClocks;
+  encounter.research = encounter.research && typeof encounter.research === "object" ? encounter.research : {};
+  encounter.research.intervalHours = Math.max(1, Number(encounter.research.intervalHours) || 4);
+  encounter.research.pointMode = encounter.research.pointMode === "individual" ? "individual" : "shared";
   encounter.targets = indexedArray(encounter.targets);
   encounter.targets.forEach((target) => {
     target.id ||= randomID(); target.name ||= "New Target"; target.image ||= "icons/svg/mystery-man.svg";
     target.sourceUuid ??= ""; target.sourceType ??= ""; target.nickname ??= ""; target.description ??= ""; target.background ??= ""; target.appearance ??= ""; target.personality ??= ""; target.gmNotes ??= ""; target.playerNotes ??= ""; target.points = Number(target.points) || 0; target.goal = Math.max(0, Number(target.goal) || 0);
+    target.hidden = truthy(target.hidden); target.exhausted = truthy(target.exhausted);
+    target.availabilityByActor = target.availabilityByActor && typeof target.availabilityByActor === "object" ? target.availabilityByActor : {};
+    target.maxPointsByActor = target.maxPointsByActor && typeof target.maxPointsByActor === "object" ? target.maxPointsByActor : {};
+    target.researchPointsByActor = target.researchPointsByActor && typeof target.researchPointsByActor === "object" ? target.researchPointsByActor : {};
+    for (const [actorId, value] of Object.entries(target.maxPointsByActor)) target.maxPointsByActor[actorId] = Math.max(0, Number(value) || 0);
+    for (const [actorId, value] of Object.entries(target.researchPointsByActor)) target.researchPointsByActor[actorId] = Math.max(0, Number(value) || 0);
     target.checks = indexedArray(target.checks);
     target.checks.forEach((check) => {
       check.id ||= randomID(); check.key ||= "skill:per"; check.label ||= checkLabel(check.key);
@@ -142,6 +152,34 @@ function normalizeReward(reward, targetId = "") {
 
 function participantActors(encounter) {
   return (encounter?.participantIds ?? []).map((id) => game.actors.get(id)).filter(Boolean);
+}
+
+function isResearch(encounter) { return encounter?.type === "research"; }
+
+function researchPointsFor(target, actorId) {
+  return Math.max(0, Number(target?.researchPointsByActor?.[actorId]) || 0);
+}
+
+function researchTotal(target) {
+  return Object.values(target?.researchPointsByActor ?? {}).reduce((total, points) => total + Math.max(0, Number(points) || 0), 0);
+}
+
+function researchMaxFor(target, actorId) {
+  return Math.max(0, Number(target?.maxPointsByActor?.[actorId]) || 0);
+}
+
+function researchSourceAvailable(target, actorId) {
+  if (!target || target.hidden || target.exhausted || target.availabilityByActor?.[actorId] === false) return false;
+  const maximum = researchMaxFor(target, actorId);
+  return !maximum || researchPointsFor(target, actorId) < maximum;
+}
+
+function updateResearchExhaustion(encounter, target) {
+  const participants = encounter.participantIds ?? [];
+  const eligible = participants.filter((actorId) => target.availabilityByActor?.[actorId] !== false);
+  if (!eligible.length) return;
+  const capped = eligible.filter((actorId) => researchMaxFor(target, actorId) > 0);
+  if (capped.length === eligible.length && capped.every((actorId) => researchPointsFor(target, actorId) >= researchMaxFor(target, actorId))) target.exhausted = true;
 }
 
 function canControlActor(actor, user = game.user) {
@@ -224,9 +262,10 @@ function publicEncounter(encounter) {
   const safe = clone(encounter);
   delete safe.history;
   safe.pendingRequests = [];
-  safe.targets = safe.targets.map((target) => ({
+  safe.targets = safe.targets.filter((target) => !target.hidden).map((target) => ({
     id: target.id, sourceUuid: target.sourceUuid, sourceType: target.sourceType, name: target.name, nickname: target.nickname, image: target.image,
     description: target.description, appearance: target.appearance, playerNotes: target.playerNotes, points: target.points, goal: target.goal,
+    exhausted: !!target.exhausted, availabilityByActor: target.availabilityByActor, maxPointsByActor: target.maxPointsByActor, researchPointsByActor: target.researchPointsByActor,
     checks: target.checks.map((check) => ({
       id: check.id, key: check.key, label: check.label, guidance: check.guidance,
       ...(safe.dcVisibility === "exact" ? { dc: check.dc } : {})
@@ -312,7 +351,8 @@ async function resumeEncounter(id) {
 function journalHtml(encounter) {
   const targets = encounter.targets.map((target) => {
     const thresholds = target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => `<li><strong>${esc(threshold.label)}</strong>${threshold.text ? ` — ${esc(threshold.text)}` : ""}${threshold.rewards.length ? `<ul>${threshold.rewards.map((reward) => `<li><strong>${esc(reward.label)}</strong>${rewardDetail(reward) ? ` — ${esc(rewardDetail(reward))}` : ""}</li>`).join("")}</ul>` : ""}</li>`).join("");
-    return `<section><h2>${esc(displayName(target))}</h2>${target.description ? `<p>${esc(target.description)}</p>` : ""}${target.background ? `<p><strong>Background:</strong> ${esc(target.background)}</p>` : ""}${target.appearance ? `<p><strong>Appearance:</strong> ${esc(target.appearance)}</p>` : ""}${target.personality ? `<p><strong>Personality:</strong> ${esc(target.personality)}</p>` : ""}<p><strong>Progress:</strong> ${target.points}${target.goal ? ` / ${target.goal}` : ""}</p>${thresholds ? `<h3>Unlocked Rewards</h3><ul>${thresholds}</ul>` : ""}</section>`;
+    const thresholdLabel = isResearch(encounter) ? "Discoveries" : "Unlocked Rewards";
+    return `<section><h2>${esc(displayName(target))}</h2>${target.description ? `<p>${esc(target.description)}</p>` : ""}${target.background ? `<p><strong>Background:</strong> ${esc(target.background)}</p>` : ""}${target.appearance ? `<p><strong>Appearance:</strong> ${esc(target.appearance)}</p>` : ""}${target.personality ? `<p><strong>Personality:</strong> ${esc(target.personality)}</p>` : ""}<p><strong>Progress:</strong> ${target.points}${target.goal ? ` / ${target.goal}` : ""}</p>${thresholds ? `<h3>${thresholdLabel}</h3><ul>${thresholds}</ul>` : ""}</section>`;
   }).join("");
   const log = encounter.log.length ? `<h2>Encounter Log</h2><ul>${encounter.log.map((entry) => `<li><strong>Round ${entry.round}:</strong> ${esc(entry.text)}</li>`).join("")}</ul>` : "";
   return `<h1>${esc(encounter.name)}</h1><p>${esc(encounter.description)}</p>${targets}${log}`;
@@ -365,6 +405,7 @@ async function handlePlayerRequest(payload) {
   const target = encounter?.targets.find((entry) => entry.id === payload.targetId);
   const check = target?.checks.find((entry) => entry.id === payload.checkId);
   if (!encounter || encounter.status !== "active" || !user || !canControlActor(actor, user) || !encounter.participantIds.includes(actor.id) || !target || !check) return;
+  if (isResearch(encounter) && !researchSourceAvailable(target, actor.id)) return;
   if (encounter.actorsActed[actor.id]) return;
   const duplicate = encounter.pendingRequests.some((request) => request.actorId === actor.id && request.status === "pending");
   if (duplicate) return;
@@ -450,13 +491,18 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     const selected = new Set(this.encounter.participantIds);
     const actors = game.actors.filter((actor) => actor.type === "character").map((actor) => ({ id: actor.id, name: actor.name, image: actor.img, nickname: this.encounter.participantNicknames[actor.id] ?? "", selected: selected.has(actor.id) }));
     const dropLabels = { social: "targets", research: "sources", chase: "obstacles", exploration: "locations", skill: "challenges" };
+    const editableEncounter = clone(this.encounter);
+    if (editableEncounter.type === "research") editableEncounter.targets.forEach((target) => {
+      target.researchRows = actors.filter((actor) => actor.selected).map((actor) => ({ id: actor.id, name: actor.name, available: target.availabilityByActor?.[actor.id] !== false, maximum: researchMaxFor(target, actor.id), earned: researchPointsFor(target, actor.id) }));
+    });
+    const headings = { social: "Influence Targets", research: "Research Sources", chase: "Chase Obstacles", exploration: "Exploration Locations", skill: "Skill Challenges" };
     return {
-      ...context, encounter: this.encounter, actors, isSocial: this.encounter.type === "social", typeLabels: TYPE_LABELS,
+      ...context, encounter: editableEncounter, actors, isSocial: this.encounter.type === "social", isResearch: this.encounter.type === "research", isPointEncounter: ["social", "research", "skill"].includes(this.encounter.type), typeLabels: TYPE_LABELS,
       checkChoices: Object.fromEntries(checkChoices()), checkChoicesWithAll: Object.fromEntries([["", "All checks"], ...checkChoices()]),
       targetChoices: Object.fromEntries([["", "This target"], ...this.encounter.targets.map((target) => [target.id, displayName(target)])]),
       dcVisibilities: { hidden: "Hidden", relative: "Relative difficulty", exact: "Exact DCs" }, criticalModes: { none: "No automatic critical results", margin5: "Critical success/failure at DC ±5" },
       modifierKinds: { weakness: "Weakness", resistance: "Resistance", circumstance: "Circumstance" }, modifierEffects: { bonus: "Roll bonus/penalty", dc: "DC adjustment", advantage: "Advantage", disadvantage: "Disadvantage" },
-      rewardKinds: { narrative: "Narrative reward", item: "Item reward", currency: "Currency reward", modifier: "Mechanical modifier", points: "Points against a target" }, rewardActivations: { automatic: "Automatic", manual: "GM activates" }, currencies: { cp: "Copper (cp)", sp: "Silver (sp)", ep: "Electrum (ep)", gp: "Gold (gp)", pp: "Platinum (pp)" }, dropLabel: dropLabels[this.encounter.type]
+      rewardKinds: { narrative: "Narrative reward", item: "Item reward", currency: "Currency reward", modifier: "Mechanical modifier", points: "Points against a target" }, rewardActivations: { automatic: "Automatic", manual: "GM activates" }, currencies: { cp: "Copper (cp)", sp: "Silver (sp)", ep: "Electrum (ep)", gp: "Gold (gp)", pp: "Platinum (pp)" }, dropLabel: dropLabels[this.encounter.type], elementHeading: headings[this.encounter.type], researchPointModes: { shared: "Shared source progress", individual: "Track each character's RP" }
     };
   }
   async _onRender(context, options) {
@@ -548,6 +594,10 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     this.encounter.participantIds = [...this.element.querySelectorAll('[name="participantIds"]:checked')].map((input) => input.value);
     for (const actor of game.actors.filter((entry) => entry.type === "character")) this.encounter.participantNicknames[actor.id] = this.element.querySelector(`[name="participantNicknames.${actor.id}"]`)?.value.trim() ?? "";
     this.encounter.showProgressClocks = this.element.querySelector('[name="showProgressClocks"]')?.checked ?? false;
+    this._captureTargetOptions();
+    normalize(this.encounter);
+  }
+  _captureTargetOptions() {
     this.encounter.targets.forEach((target, targetIndex) => {
       target.modifiers.forEach((modifier, modifierIndex) => {
         modifier.conditional = this.element.querySelector(`[name="targets.${targetIndex}.modifiers.${modifierIndex}.conditional"]`)?.checked ?? false;
@@ -557,25 +607,32 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
         reward.playerVisible = this.element.querySelector(`[name="targets.${targetIndex}.thresholds.${thresholdIndex}.rewards.${rewardIndex}.playerVisible"]`)?.checked ?? false;
         reward.conditional = this.element.querySelector(`[name="targets.${targetIndex}.thresholds.${thresholdIndex}.rewards.${rewardIndex}.conditional"]`)?.checked ?? false;
       }));
+      if (this.encounter.type === "research") {
+        target.hidden = this.element.querySelector(`[name="targets.${targetIndex}.hidden"]`)?.checked ?? false;
+        target.exhausted = this.element.querySelector(`[name="targets.${targetIndex}.exhausted"]`)?.checked ?? false;
+        for (const actorId of this.encounter.participantIds) {
+        const availabilityInput = this.element.querySelector(`[name="targets.${targetIndex}.availabilityByActor.${actorId}"]`);
+        const maximumInput = this.element.querySelector(`[name="targets.${targetIndex}.maxPointsByActor.${actorId}"]`);
+        if (availabilityInput) target.availabilityByActor[actorId] = availabilityInput.checked;
+        else if (target.availabilityByActor[actorId] == null) target.availabilityByActor[actorId] = true;
+        if (maximumInput) target.maxPointsByActor[actorId] = Math.max(0, Number(maximumInput.value) || 0);
+        }
+      }
     });
-    normalize(this.encounter);
   }
   static async submit(_event, _form, formData) {
+    const previousType = this.encounter.type;
     foundry.utils.mergeObject(this.encounter, foundry.utils.expandObject(formData.object), { inplace: true, overwrite: true });
     normalize(this.encounter);
+    if (previousType !== this.encounter.type) {
+      const defaultNames = { social: "New NPC", research: "New Source", chase: "New Obstacle", exploration: "New Location", skill: "New Challenge" };
+      for (const target of this.encounter.targets) if (target.name === defaultNames[previousType]) target.name = defaultNames[this.encounter.type];
+    }
     this.encounter.participantIds = [...this.element.querySelectorAll('[name="participantIds"]:checked')].map((input) => input.value);
     for (const actor of game.actors.filter((entry) => entry.type === "character")) this.encounter.participantNicknames[actor.id] = this.element.querySelector(`[name="participantNicknames.${actor.id}"]`)?.value.trim() ?? "";
     this.encounter.showProgressClocks = this.element.querySelector('[name="showProgressClocks"]')?.checked ?? false;
-    this.encounter.targets.forEach((target, targetIndex) => {
-      target.modifiers.forEach((modifier, modifierIndex) => {
-        modifier.conditional = this.element.querySelector(`[name="targets.${targetIndex}.modifiers.${modifierIndex}.conditional"]`)?.checked ?? false;
-        modifier.active = this.element.querySelector(`[name="targets.${targetIndex}.modifiers.${modifierIndex}.active"]`)?.checked ?? false;
-      });
-      target.thresholds.forEach((threshold, thresholdIndex) => threshold.rewards.forEach((reward, rewardIndex) => {
-        reward.playerVisible = this.element.querySelector(`[name="targets.${targetIndex}.thresholds.${thresholdIndex}.rewards.${rewardIndex}.playerVisible"]`)?.checked ?? false;
-        reward.conditional = this.element.querySelector(`[name="targets.${targetIndex}.thresholds.${thresholdIndex}.rewards.${rewardIndex}.conditional"]`)?.checked ?? false;
-      }));
-    });
+    this._captureTargetOptions();
+    normalize(this.encounter);
     await Store.save(this.encounter); ui.notifications.info("Encounter saved."); await this.render({ force: true });
   }
   static async addTarget() { this._capture(); this.encounter.targets.push(newTarget(this.encounter.type)); await this.render({ force: true }); }
@@ -692,7 +749,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     window: { title: "Non-Combat Encounter", icon: "fa-solid fa-people-group", resizable: true },
     actions: {
       manage: EncounterTracker.manage, selectActor: EncounterTracker.selectActor, selectTarget: EncounterTracker.selectTarget,
-      requestCheck: EncounterTracker.requestCheck, adjustPoints: EncounterTracker.adjustPoints, nextRound: EncounterTracker.nextRound,
+      requestCheck: EncounterTracker.requestCheck, adjustPoints: EncounterTracker.adjustPoints, adjustResearchPoints: EncounterTracker.adjustResearchPoints, nextRound: EncounterTracker.nextRound,
       completeRequest: EncounterTracker.completeRequest, cancelRequest: EncounterTracker.cancelRequest,
       toggleReward: EncounterTracker.toggleReward, applyReward: EncounterTracker.applyReward,
       undo: EncounterTracker.undo, pause: EncounterTracker.pause, end: EncounterTracker.end
@@ -705,8 +762,11 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     const owned = encounter ? participantActors(encounter).filter((actor) => canControlActor(actor)) : [];
     if (encounter && !owned.some((actor) => actor.id === viewActorId)) viewActorId = owned[0]?.id ?? "";
     if (encounter && !encounter.targets.some((target) => target.id === viewTargetId)) viewTargetId = encounter.activeTargetId || encounter.targets[0]?.id || "";
-    const participants = encounter ? participantActors(encounter).map((actor) => ({ id: actor.id, name: actor.name, displayName: encounter.participantNicknames[actor.id]?.trim() || actor.name, image: actor.img, owned: canControlActor(actor), acted: !!encounter.actorsActed[actor.id], selected: actor.id === viewActorId })) : [];
-    if (encounter) encounter.targets = encounter.targets.map((target) => ({ ...target, displayName: displayName(target), selected: target.id === viewTargetId, progressPct: target.goal ? Math.min(100, Math.max(0, Math.round((target.points / target.goal) * 100))) : 0, unlockedThresholds: target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => ({ ...threshold, rewards: threshold.rewards.filter((reward) => game.user.isGM || (reward.playerVisible && reward.active)).map((reward) => ({ ...reward, description: rewardDetail(reward) })) })) }));
+    const participants = encounter ? participantActors(encounter).map((actor) => ({ id: actor.id, name: actor.name, displayName: encounter.participantNicknames[actor.id]?.trim() || actor.name, image: actor.img, owned: canControlActor(actor), acted: !!encounter.actorsActed[actor.id], selected: actor.id === viewActorId, researchTotal: encounter.targets.reduce((sum, source) => sum + researchPointsFor(source, actor.id), 0) })) : [];
+    if (encounter) {
+      const visibleTargets = !game.user.isGM && isResearch(encounter) ? encounter.targets.filter((target) => owned.some((actor) => researchSourceAvailable(target, actor.id))) : encounter.targets;
+      encounter.targets = visibleTargets.map((target) => ({ ...target, displayName: displayName(target), selected: target.id === viewTargetId, progressPct: target.goal ? Math.min(100, Math.max(0, Math.round((target.points / target.goal) * 100))) : 0, sourceAvailable: !isResearch(encounter) || (!!viewActorId && researchSourceAvailable(target, viewActorId)), selectedActorPoints: researchPointsFor(target, viewActorId), selectedActorMaximum: researchMaxFor(target, viewActorId), researchRows: participants.map((actor) => ({ ...actor, sourcePoints: researchPointsFor(target, actor.id), sourceMaximum: researchMaxFor(target, actor.id), available: researchSourceAvailable(target, actor.id) })), unlockedThresholds: target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => ({ ...threshold, rewards: threshold.rewards.filter((reward) => game.user.isGM || (reward.playerVisible && reward.active)).map((reward) => ({ ...reward, description: rewardDetail(reward) })) })) }));
+    }
     const selectedTarget = encounter?.targets.find((target) => target.id === viewTargetId);
     const selectedActor = participants.find((actor) => actor.id === viewActorId);
     if (selectedTarget && selectedActor) selectedTarget.checks = selectedTarget.checks.map((check) => ({ ...check, actorModifier: signed(actorCheckModifier(game.actors.get(selectedActor.id), check.key)) }));
@@ -715,7 +775,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
       const requestCheck = requestTarget?.checks.find((entry) => entry.id === request.checkId);
       return { ...request, modifier: signed(actorCheckModifier(game.actors.get(request.actorId), requestCheck?.key)) };
     }) ?? [] : [];
-    return { ...context, encounter, participants, selectedTarget, selectedActor, pendingRequests, typeLabel: encounter ? TYPE_LABELS[encounter.type] : "", noEncounter: !encounter, isGM: game.user.isGM, canRequest: encounter?.status === "active" && !!selectedActor && !selectedActor.acted, showDC: game.user.isGM || encounter?.dcVisibility === "exact", hasUndo: game.user.isGM && !!encounter?.history.length };
+    return { ...context, encounter, participants, selectedTarget, selectedActor, pendingRequests, typeLabel: encounter ? TYPE_LABELS[encounter.type] : "", noEncounter: !encounter, isGM: game.user.isGM, isResearch: isResearch(encounter), canRequest: encounter?.status === "active" && !!selectedActor && !selectedActor.acted && (!isResearch(encounter) || !!selectedTarget?.sourceAvailable), showDC: game.user.isGM || encounter?.dcVisibility === "exact", hasUndo: game.user.isGM && !!encounter?.history.length };
   }
   static manage() { const encounter = Store.get(); if (encounter) new EncounterEditor(encounter).render({ force: true }); else manager.render({ force: true }); }
   static selectActor(_event, target) { viewActorId = target.dataset.id; this.render({ force: true }); }
@@ -725,7 +785,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     const actor = game.actors.get(viewActorId);
     const selectedTarget = encounter?.targets.find((entry) => entry.id === viewTargetId);
     const check = selectedTarget?.checks.find((entry) => entry.id === target.dataset.checkId);
-    if (!encounter || !actor || !check || !canControlActor(actor) || encounter.actorsActed[actor.id]) return ui.notifications.warn("Choose an eligible character who has not acted.");
+    if (!encounter || !actor || !check || !canControlActor(actor) || encounter.actorsActed[actor.id] || (isResearch(encounter) && !researchSourceAvailable(selectedTarget, actor.id))) return ui.notifications.warn("Choose an eligible character and available source.");
     const request = { action: "request", encounterId: encounter.id, userId: game.user.id, actorId: actor.id, targetId: selectedTarget.id, checkId: check.id };
     if (game.user.isGM) handlePlayerRequest(request);
     else game.socket.emit(SOCKET, request);
@@ -755,6 +815,23 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     });
     const updatedTarget = Store.get()?.targets.find((entry) => entry.id === targetId);
     if (updatedTarget) await postThresholdCards(updatedTarget, gained, lost);
+  }
+  static async adjustResearchPoints(_event, target) {
+    const targetId = target.dataset.id;
+    const actorId = target.dataset.actorId;
+    const delta = Number(target.dataset.delta) || 0;
+    await mutateActive("Adjusted individual research points", async (encounter) => {
+      const source = encounter.targets.find((entry) => entry.id === targetId);
+      if (!source || !isResearch(encounter)) return;
+      const previous = source.points;
+      const maximum = researchMaxFor(source, actorId);
+      source.researchPointsByActor[actorId] = Math.max(0, Math.min(maximum || Infinity, researchPointsFor(source, actorId) + delta));
+      source.points = encounter.research.pointMode === "individual" ? researchTotal(source) : Math.max(0, source.points + delta);
+      if (delta < 0) source.exhausted = false;
+      updateResearchExhaustion(encounter, source);
+      addLog(encounter, "points", `${game.actors.get(actorId)?.name ?? "Character"}: ${delta >= 0 ? "+" : ""}${delta} RP from ${source.name}.`, { targetId, actorId });
+      if (previous !== source.points) source.updatedAt = Date.now();
+    });
   }
   static async toggleReward(_event, target) {
     let changed;
@@ -813,8 +890,17 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
       current.actorsActed[currentRequest.actorId] = true;
       const currentTarget = current.targets.find((entry) => entry.id === currentRequest.targetId);
       const previousPoints = currentTarget.points;
-      const earnedPoints = pointsForOutcome(result.check, result.degree.key);
-      currentTarget.points = Math.max(0, currentTarget.points + earnedPoints);
+      let earnedPoints = pointsForOutcome(result.check, result.degree.key);
+      if (isResearch(current)) {
+        const actorId = currentRequest.actorId;
+        const maximum = researchMaxFor(currentTarget, actorId);
+        const currentActorPoints = researchPointsFor(currentTarget, actorId);
+        const nextActorPoints = Math.max(0, Math.min(maximum || Infinity, currentActorPoints + earnedPoints));
+        earnedPoints = nextActorPoints - currentActorPoints;
+        currentTarget.researchPointsByActor[actorId] = nextActorPoints;
+        currentTarget.points = current.research.pointMode === "individual" ? researchTotal(currentTarget) : Math.max(0, previousPoints + earnedPoints);
+        updateResearchExhaustion(current, currentTarget);
+      } else currentTarget.points = Math.max(0, currentTarget.points + earnedPoints);
       for (const selected of result.selectedModifiers) {
         const local = currentTarget.modifiers.find((modifier) => modifier.id === selected.id);
         const reward = current.targets.flatMap((entry) => entry.thresholds.flatMap((threshold) => threshold.rewards)).find((entry) => entry.id === selected.id);

@@ -29,6 +29,12 @@
 .nce-check > label { display: grid; grid-template-columns: 110px 1fr; gap: .5rem; margin-top: .5rem; font-weight: 600; }
 .nce-check textarea { min-height: 48px; }
 .nce-social-lore { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; margin-top: .6rem; }
+.nce-research-source-settings { margin-top: .65rem; padding: .7rem; border: 1px solid var(--color-border-light-2); border-radius: 6px; background: var(--nce-panel); }
+.nce-research-source-settings > p { margin: .45rem 0; font-size: .82rem; }
+.nce-research-student { display: grid; grid-template-columns: minmax(160px, 1fr) 150px auto; gap: .55rem; align-items: center; padding: .35rem 0; border-top: 1px solid color-mix(in srgb, var(--color-border-light-2) 55%, transparent); }
+.nce-research-student label { display: flex; gap: .35rem; align-items: center; }
+.nce-research-student label:last-of-type { justify-content: space-between; }
+.nce-research-student input[type="number"] { width: 65px; }
 .nce-social-lore label, .nce-modifier-editor > label, .nce-threshold-editor > label, .nce-reward-editor > label { display: grid; gap: .25rem; font-weight: 600; }
 .nce-social-config { margin-top: 1rem; padding-top: .5rem; border-top: 1px solid var(--color-border-light-2); }
 .nce-outcome-points, .nce-config-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .45rem; margin-top: .5rem; }
@@ -64,6 +70,12 @@
 .nce-head-to-head figcaption { margin-top: .3rem; font-weight: 700; }
 .nce-head-to-head > strong { font-size: 1.5rem; opacity: .7; }
 .nce-points { text-align: center; }
+.nce-research-interval, .nce-research-personal, .nce-source-unavailable { margin: .65rem 0; padding: .45rem .6rem; border-radius: 5px; background: var(--nce-panel); }
+.nce-source-unavailable { color: var(--color-level-warning, #c77a22); }
+.nce-research-contributions { margin: .7rem 0; padding: .55rem; border: 1px solid var(--color-border-light-2); border-radius: 6px; }
+.nce-research-contributions h4 { margin: 0 0 .35rem; }
+.nce-research-contributions > div { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: .35rem; padding: .22rem 0; }
+.nce-research-contributions button { width: 28px; height: 26px; padding: 0; }
 .nce-progress-clock { --size: 76px; display: grid; place-items: center; width: var(--size); height: var(--size); margin: .65rem auto; border-radius: 50%; background: conic-gradient(var(--nce-accent) calc(var(--progress) * 1%), #0005 0); }
 .nce-progress-clock::before { content: ""; grid-area: 1 / 1; width: 58px; height: 58px; border-radius: 50%; background: var(--color-bg-option, #222); }
 .nce-progress-clock span { z-index: 1; grid-area: 1 / 1; font-weight: 800; }
@@ -101,6 +113,7 @@
 .nce-unlocked-rewards article { margin: .4rem 0; padding: .55rem; background: var(--nce-panel); border-radius: 6px; }
 .nce-unlocked-rewards h5 { margin: 0 0 .25rem; }
 .nce-unlocked-rewards button { width: auto; margin-left: .35rem; padding: .15rem .35rem; font-size: .75rem; }
+@media (max-width: 600px) { .nce-research-student { grid-template-columns: 1fr; } }
 
 .dnd5e-nce-sidebar { min-height: 0; overflow: hidden; pointer-events: all; }
 .dnd5e-nce-sidebar:not(.active), .dnd5e-nce-sidebar[hidden] { display: none !important; }
