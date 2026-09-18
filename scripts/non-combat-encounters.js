@@ -545,7 +545,9 @@ function renderEncounterSidebar() {
       if (!selected || selected === SIDEBAR_TAB) return;
       const panel = document.getElementById(SIDEBAR_TAB);
       if (panel) { panel.classList.remove("active"); panel.hidden = true; }
-      tabsMenu.querySelector(`[data-tab="${SIDEBAR_TAB}"]`)?.classList.remove("active");
+      const encounterTab = tabsMenu.querySelector(`[data-tab="${SIDEBAR_TAB}"]`);
+      encounterTab?.classList.remove("active");
+      encounterTab?.setAttribute("aria-pressed", "false");
       content.classList.remove("active-dnd5e-nce");
       const selectedPanel = content.querySelector(`:scope > #${CSS.escape(selected)}`);
       selectedPanel?.classList.add("active");

@@ -7,6 +7,7 @@
 - Added player-safe encounter payloads that omit undo history, pending GM requests, and hidden DC values.
 - Added configurable hidden, relative, or exact player DC visibility.
 - Fixed Create Encounter persisting an empty draft before its editor was saved; closing a brand-new editor now discards the unsaved encounter.
+- Fixed the Non-Combat Encounters sidebar button remaining visually selected after opening another sidebar tab.
 
 ## 0.0.1 — 2026-09-16
 
