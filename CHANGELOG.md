@@ -8,6 +8,10 @@
 - Added configurable hidden, relative, or exact player DC visibility.
 - Fixed Create Encounter persisting an empty draft before its editor was saved; closing a brand-new editor now discards the unsaved encounter.
 - Fixed the Non-Combat Encounters sidebar button remaining visually selected after opening another sidebar tab.
+- Added the D&D5e roll engine for ability checks, skills, saving throws, and tools using the system's supported roll APIs.
+- Added actor modifiers to available checks and pending requests, including proficiency and expertise calculated by D&D5e.
+- Added GM roll confirmation with normal, advantage, disadvantage, situational modifiers, notes, and roll visibility.
+- Added DC adjudication, optional ±5 critical outcomes, styled result cards, and complete roll audit details.
 
 ## 0.0.1 — 2026-09-16
 

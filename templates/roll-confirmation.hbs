@@ -1,0 +1,8 @@
+<div class="nce-roll-confirmation standard-form">
+  <header><h2>{{request.actorName}} → {{request.targetName}}</h2><p><strong>{{request.checkLabel}} {{modifier}}</strong> against DC {{dc}}</p></header>
+  <div class="form-group"><label>Situational Modifier</label><div class="form-fields"><input type="number" name="bonus" value="0"></div></div>
+  <div class="form-group"><label>Reason</label><div class="form-fields"><input type="text" name="bonusNote" placeholder="Optional note"></div></div>
+  <div class="form-group"><label>Roll Visibility</label><div class="form-fields"><select name="rollMode"><option value="publicroll">Public Roll</option><option value="gmroll">Private GM Roll</option><option value="blindroll">Blind GM Roll</option><option value="selfroll">Self Roll</option></select></div></div>
+  <p class="hint">{{#if (eq criticalMode "margin5")}}A result 5 above or below the DC becomes a critical success or critical failure.{{else}}Natural 20s and natural 1s do not automatically change the result.{{/if}}</p>
+  <footer class="nce-roll-buttons"><button type="button" data-action="disadvantage"><i class="fa-solid fa-angles-down"></i> Confirm with Disadvantage</button><button type="button" class="default" data-action="normal"><i class="fa-solid fa-dice-d20"></i> Confirm Roll</button><button type="button" data-action="advantage"><i class="fa-solid fa-angles-up"></i> Confirm with Advantage</button></footer>
+</div>

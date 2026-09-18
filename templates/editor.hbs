@@ -7,6 +7,7 @@
       <label>Description and Stakes<textarea name="description">{{encounter.description}}</textarea></label>
       <div class="form-group"><label>Current Round</label><div class="form-fields"><input type="number" min="1" name="currentRound" value="{{encounter.currentRound}}"><label>Round Limit</label><input type="number" min="0" name="roundLimit" value="{{encounter.roundLimit}}"></div></div>
       <div class="form-group"><label>Player DC Visibility</label><div class="form-fields"><select name="dcVisibility">{{selectOptions dcVisibilities selected=encounter.dcVisibility}}</select></div></div>
+      <div class="form-group"><label>Critical Results</label><div class="form-fields"><select name="criticalMode">{{selectOptions criticalModes selected=encounter.criticalMode}}</select></div></div>
     </fieldset>
     <fieldset><legend>Participating Characters</legend><div class="nce-participants">{{#each actors}}<label><input type="checkbox" name="participantIds" value="{{id}}" {{checked selected}}><img src="{{image}}" alt=""> {{name}}</label>{{else}}<p>No character Actors are available.</p>{{/each}}</div></fieldset>
     <div class="nce-target-drop-zone" data-target-drop-zone><i class="fa-solid fa-arrow-down-to-bracket"></i><strong>Drop {{dropLabel}} here</strong><span>Drag an Actor or Item from the Foundry sidebar to create a configured entry.</span></div>

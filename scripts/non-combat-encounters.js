@@ -1,7 +1,7 @@
 const MODULE_ID = "dnd5e-non-combat-encounters";
 const SETTINGS = { encounters: "encounters", active: "activeEncounter" };
 const SOCKET = `module.${MODULE_ID}`;
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const MAX_HISTORY = 30;
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -28,6 +28,19 @@ const randomID = () => foundry.utils.randomID();
 const esc = (value) => foundry.utils.escapeHTML(String(value ?? ""));
 const checkLabelForKey = (key) => CHECK_CHOICES.find(([value]) => value === key)?.[1] ?? "Check";
 
+function checkChoices() {
+  const choices = [...CHECK_CHOICES];
+  for (const key of Object.keys(CONFIG.DND5E.tools ?? {})) {
+    const label = dnd5e.documents.Trait.keyLabel(key, { trait: "tool" }) ?? key;
+    choices.push([`tool:${key}`, label]);
+  }
+  return choices;
+}
+
+function checkLabel(key) {
+  return checkChoices().find(([value]) => value === key)?.[1] ?? checkLabelForKey(key);
+}
+
 function indexedArray(value) {
   if (Array.isArray(value)) return value;
   if (!value || typeof value !== "object") return [];
@@ -49,7 +62,7 @@ function newEncounter() {
     id, name: "New Non-Combat Encounter", type: "social", status: "draft",
     schemaVersion: SCHEMA_VERSION, image: "icons/svg/d20-black.svg", description: "", participantIds: [],
     currentRound: 1, roundLimit: 0, targets: [newTarget("social")], activeActorId: "", activeTargetId: "",
-    actorsActed: {}, pendingRequests: [], log: [], history: [], dcVisibility: "hidden",
+    actorsActed: {}, pendingRequests: [], log: [], history: [], dcVisibility: "hidden", criticalMode: "none",
     createdAt: Date.now(), updatedAt: Date.now()
   };
 }
@@ -68,14 +81,15 @@ function normalize(encounter) {
   encounter.log = indexedArray(encounter.log);
   encounter.history = indexedArray(encounter.history);
   encounter.dcVisibility = ["hidden", "relative", "exact"].includes(encounter.dcVisibility) ? encounter.dcVisibility : "hidden";
+  encounter.criticalMode = ["none", "margin5"].includes(encounter.criticalMode) ? encounter.criticalMode : "none";
   encounter.targets = indexedArray(encounter.targets);
   encounter.targets.forEach((target) => {
     target.id ||= randomID(); target.name ||= "New Target"; target.image ||= "icons/svg/mystery-man.svg";
     target.sourceUuid ??= ""; target.sourceType ??= ""; target.description ??= ""; target.points = Number(target.points) || 0; target.goal = Math.max(0, Number(target.goal) || 0);
     target.checks = indexedArray(target.checks);
     target.checks.forEach((check) => {
-      check.id ||= randomID(); check.key ||= "skill:per"; check.label ||= checkLabelForKey(check.key);
-      if (check.labelModified == null) check.labelModified = !CHECK_CHOICES.some(([, label]) => label === check.label);
+      check.id ||= randomID(); check.key ||= "skill:per"; check.label ||= checkLabel(check.key);
+      if (check.labelModified == null) check.labelModified = !checkChoices().some(([, label]) => label === check.label);
       check.guidance ??= ""; check.dc = Math.max(0, Number(check.dc) || 0);
     });
   });
@@ -90,6 +104,33 @@ function participantActors(encounter) {
 
 function canControlActor(actor, user = game.user) {
   return !!actor && (user?.isGM || actor.testUserPermission(user, CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER));
+}
+
+function parseCheckKey(key = "") {
+  const [type, id] = key.split(":", 2);
+  return { type, id };
+}
+
+function actorCheckModifier(actor, key) {
+  if (!actor) return null;
+  const { type, id } = parseCheckKey(key);
+  if (type === "skill") return Number(actor.system.skills?.[id]?.total ?? actor.system.skills?.[id]?.mod ?? 0);
+  if (type === "tool") return Number(actor.system.tools?.[id]?.total ?? 0);
+  if (type === "save") return Number(actor.system.abilities?.[id]?.save?.total ?? actor.system.abilities?.[id]?.save ?? 0);
+  if (type === "ability") return Number(actor.system.abilities?.[id]?.check?.total ?? actor.system.abilities?.[id]?.mod ?? 0);
+  return null;
+}
+
+function signed(value) {
+  const number = Number(value) || 0;
+  return `${number >= 0 ? "+" : ""}${number}`;
+}
+
+function degreeFor(total, dc, criticalMode) {
+  if (criticalMode === "margin5" && total >= dc + 5) return { key: "criticalSuccess", label: "Critical Success" };
+  if (total >= dc) return { key: "success", label: "Success" };
+  if (criticalMode === "margin5" && total <= dc - 5) return { key: "criticalFailure", label: "Critical Failure" };
+  return { key: "failure", label: "Failure" };
 }
 
 function snapshotEncounter(encounter, label) {
@@ -325,7 +366,7 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     const selected = new Set(this.encounter.participantIds);
     const actors = game.actors.filter((actor) => actor.type === "character").map((actor) => ({ id: actor.id, name: actor.name, image: actor.img, selected: selected.has(actor.id) }));
     const dropLabels = { social: "targets", research: "sources", chase: "obstacles", exploration: "locations", skill: "challenges" };
-    return { ...context, encounter: this.encounter, actors, typeLabels: TYPE_LABELS, checkChoices: Object.fromEntries(CHECK_CHOICES), dcVisibilities: { hidden: "Hidden", relative: "Relative difficulty", exact: "Exact DCs" }, dropLabel: dropLabels[this.encounter.type] };
+    return { ...context, encounter: this.encounter, actors, typeLabels: TYPE_LABELS, checkChoices: Object.fromEntries(checkChoices()), dcVisibilities: { hidden: "Hidden", relative: "Relative difficulty", exact: "Exact DCs" }, criticalModes: { none: "No automatic critical results", margin5: "Critical success/failure at DC ±5" }, dropLabel: dropLabels[this.encounter.type] };
   }
   async _onRender(context, options) {
     await super._onRender(context, options);
@@ -343,7 +384,7 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
       if (label && select && modified?.value !== "true") label.value = select.selectedOptions[0]?.textContent?.trim() || checkLabelForKey(select.value);
       select?.addEventListener("change", () => {
         if (!label || modified?.value === "true") return;
-        label.value = select.selectedOptions[0]?.textContent?.trim() || checkLabelForKey(select.value);
+        label.value = select.selectedOptions[0]?.textContent?.trim() || checkLabel(select.value);
       });
       label?.addEventListener("input", () => {
         if (modified) modified.value = String(Boolean(label.value.trim()));
@@ -399,6 +440,84 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
 let viewActorId = "";
 let viewTargetId = "";
 
+class RollConfirmation extends HandlebarsApplicationMixin(ApplicationV2) {
+  constructor(data, options = {}) {
+    super(options);
+    this.data = data;
+    this.promise = new Promise((resolve) => { this.resolve = resolve; });
+  }
+  static DEFAULT_OPTIONS = {
+    id: "dnd5e-nce-roll-confirmation", tag: "form", classes: ["dnd5e-nce"],
+    position: { width: 480, height: "auto" }, window: { title: "Confirm Check", icon: "fa-solid fa-dice-d20", resizable: false },
+    actions: { normal: RollConfirmation.normal, advantage: RollConfirmation.advantage, disadvantage: RollConfirmation.disadvantage }
+  };
+  static PARTS = { form: { template: `modules/${MODULE_ID}/templates/roll-confirmation.hbs`, root: true } };
+  async _prepareContext(options) { return { ...(await super._prepareContext(options)), ...this.data }; }
+  _choice(mode) {
+    const form = new foundry.applications.ux.FormDataExtended(this.element).object;
+    this.resolve({ mode, bonus: Number(form.bonus) || 0, bonusNote: String(form.bonusNote ?? "").trim(), rollMode: form.rollMode || "publicroll" });
+    this.resolve = () => {};
+    this.close();
+  }
+  static normal() { this._choice("normal"); }
+  static advantage() { this._choice("advantage"); }
+  static disadvantage() { this._choice("disadvantage"); }
+  async close(options = {}) {
+    this.resolve?.(null);
+    this.resolve = () => {};
+    return super.close(options);
+  }
+}
+
+async function confirmRoll(data) {
+  const dialog = new RollConfirmation(data);
+  dialog.render({ force: true });
+  return dialog.promise;
+}
+
+async function rollRequestedCheck(request, encounter, choice) {
+  const actor = game.actors.get(request.actorId);
+  const target = encounter.targets.find((entry) => entry.id === request.targetId);
+  const check = target?.checks.find((entry) => entry.id === request.checkId);
+  if (!actor || !target || !check) throw new Error("The requested actor, target, or check is no longer available.");
+  const { type, id } = parseCheckKey(check.key);
+  const advantageModes = CONFIG.Dice.D20Roll.ADV_MODE;
+  const advantageMode = choice.mode === "advantage" ? advantageModes.ADVANTAGE : choice.mode === "disadvantage" ? advantageModes.DISADVANTAGE : advantageModes.NORMAL;
+  const bonus = Number(choice.bonus) || 0;
+  const config = { ability: id, target: check.dc, advantageMode };
+  if (["skill", "tool"].includes(type)) config.bonus = String(bonus);
+  else if (bonus) config.rolls = [{ parts: ["@nceBonus"], data: { nceBonus: bonus }, options: {} }];
+  const dialog = { configure: false };
+  const message = {
+    rollMode: choice.rollMode,
+    data: {
+      flavor: `${esc(actor.name)} — ${esc(check.label)} against ${esc(target.name)}`,
+      flags: { [MODULE_ID]: { encounterId: encounter.id, requestId: request.id, dc: check.dc } }
+    }
+  };
+  let rolls;
+  if (type === "skill") rolls = await actor.rollSkill({ ...config, skill: id }, dialog, message);
+  else if (type === "tool") rolls = await actor.rollToolCheck({ ...config, tool: id }, dialog, message);
+  else if (type === "save") rolls = await actor.rollSavingThrow(config, dialog, message);
+  else rolls = await actor.rollAbilityCheck(config, dialog, message);
+  const roll = Array.isArray(rolls) ? rolls[0] : rolls;
+  if (!roll) return null;
+  const total = Number(roll.total);
+  return { total, degree: degreeFor(total, check.dc, encounter.criticalMode), actor, target, check, bonus };
+}
+
+async function postResultCard(encounter, result, choice) {
+  const whisper = choice.rollMode === "publicroll" ? [] : ChatMessage.getWhisperRecipients("GM").map((user) => user.id);
+  const hiddenNumbers = choice.rollMode !== "publicroll" || encounter.dcVisibility === "hidden";
+  const detail = hiddenNumbers ? result.degree.label : `${result.degree.label} — ${result.total} vs. DC ${result.check.dc}`;
+  const bonusText = result.bonus ? `<p>Situational modifier: ${signed(result.bonus)}${choice.bonusNote ? ` — ${esc(choice.bonusNote)}` : ""}</p>` : "";
+  await ChatMessage.create({
+    speaker: ChatMessage.getSpeaker({ actor: result.actor }), whisper,
+    content: `<div class="dnd5e-nce-chat-result ${result.degree.key}"><h3>${esc(result.actor.name)} — ${esc(result.check.label)}</h3><p><strong>${esc(detail)}</strong> against ${esc(result.target.name)}.</p>${bonusText}</div>`,
+    flags: { [MODULE_ID]: { encounterId: encounter.id, outcome: result.degree.key } }
+  });
+}
+
 class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
   static DEFAULT_OPTIONS = {
     id: "dnd5e-nce-tracker", classes: ["dnd5e-nce"], position: { width: 760, height: 760 },
@@ -421,7 +540,12 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     if (encounter) encounter.targets = encounter.targets.map((target) => ({ ...target, selected: target.id === viewTargetId, progressPct: target.goal ? Math.min(100, Math.max(0, Math.round((target.points / target.goal) * 100))) : 0 }));
     const selectedTarget = encounter?.targets.find((target) => target.id === viewTargetId);
     const selectedActor = participants.find((actor) => actor.id === viewActorId);
-    const pendingRequests = game.user.isGM ? encounter?.pendingRequests.filter((request) => request.status === "pending") ?? [] : [];
+    if (selectedTarget && selectedActor) selectedTarget.checks = selectedTarget.checks.map((check) => ({ ...check, actorModifier: signed(actorCheckModifier(game.actors.get(selectedActor.id), check.key)) }));
+    const pendingRequests = game.user.isGM ? encounter?.pendingRequests.filter((request) => request.status === "pending").map((request) => {
+      const requestTarget = encounter.targets.find((entry) => entry.id === request.targetId);
+      const requestCheck = requestTarget?.checks.find((entry) => entry.id === request.checkId);
+      return { ...request, modifier: signed(actorCheckModifier(game.actors.get(request.actorId), requestCheck?.key)) };
+    }) ?? [] : [];
     return { ...context, encounter, participants, selectedTarget, selectedActor, pendingRequests, typeLabel: encounter ? TYPE_LABELS[encounter.type] : "", noEncounter: !encounter, isGM: game.user.isGM, canRequest: encounter?.status === "active" && !!selectedActor && !selectedActor.acted, showDC: game.user.isGM || encounter?.dcVisibility === "exact", hasUndo: game.user.isGM && !!encounter?.history.length };
   }
   static manage() { const encounter = Store.get(); if (encounter) new EncounterEditor(encounter).render({ force: true }); else manager.render({ force: true }); }
@@ -457,14 +581,31 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     });
   }
   static async completeRequest(_event, target) {
-    await mutateActive("Completed check request", async (encounter) => {
-      const request = encounter.pendingRequests.find((entry) => entry.id === target.dataset.id);
-      if (!request) return;
-      request.status = "completed";
-      request.completedAt = Date.now();
-      encounter.actorsActed[request.actorId] = true;
-      addLog(encounter, "action", `${request.actorName} completed ${request.checkLabel} against ${request.targetName}.`, request);
+    const encounter = Store.get();
+    const request = encounter?.pendingRequests.find((entry) => entry.id === target.dataset.id && entry.status === "pending");
+    if (!request) return ui.notifications.warn("That request is no longer pending.");
+    const requestTarget = encounter.targets.find((entry) => entry.id === request.targetId);
+    const requestCheck = requestTarget?.checks.find((entry) => entry.id === request.checkId);
+    const actor = game.actors.get(request.actorId);
+    const choice = await confirmRoll({ request, dc: requestCheck?.dc ?? 0, modifier: signed(actorCheckModifier(actor, requestCheck?.key)), criticalMode: encounter.criticalMode });
+    if (!choice) return;
+    let result;
+    try { result = await rollRequestedCheck(request, encounter, choice); }
+    catch (error) { console.error(`${MODULE_ID} | Roll failed`, error); return ui.notifications.error(`The check could not be rolled: ${error.message}`); }
+    if (!result) return ui.notifications.warn("The roll was cancelled or produced no result.");
+    await mutateActive("Resolved check request", async (current) => {
+      const currentRequest = current.pendingRequests.find((entry) => entry.id === request.id);
+      if (!currentRequest || currentRequest.status !== "pending") return;
+      currentRequest.status = "completed";
+      currentRequest.completedAt = Date.now();
+      currentRequest.rollTotal = result.total;
+      currentRequest.outcome = result.degree.key;
+      currentRequest.situationalBonus = result.bonus;
+      currentRequest.bonusNote = choice.bonusNote;
+      current.actorsActed[currentRequest.actorId] = true;
+      addLog(current, "action", `${currentRequest.actorName} rolled ${result.total} on ${currentRequest.checkLabel}: ${result.degree.label}.`, currentRequest);
     });
+    await postResultCard(encounter, result, choice);
   }
   static async cancelRequest(_event, target) {
     await mutateActive("Cancelled check request", async (encounter) => {
