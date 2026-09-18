@@ -12,6 +12,12 @@ A Foundry VTT module for preparing and running structured non-combat encounters 
 - Multiple targets, sources, obstacles, or challenges
 - D&D ability checks, skills, and saving throws with DCs and player guidance
 - Draft, active, and paused encounter states
+- Schema-versioned data migration
+- Synchronized GM/player encounter runtime
+- Ownership-aware participant and target selection
+- Persistent check requests, rounds, acted states, manual points, logs, and undo
+- Pause, resume, reconnect recovery, and End & Publish lifecycle
+- Player-safe DC visibility controls
 
 ## Planned rules integration
 

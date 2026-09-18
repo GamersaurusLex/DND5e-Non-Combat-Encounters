@@ -1,5 +1,8 @@
 const MODULE_ID = "dnd5e-non-combat-encounters";
 const SETTINGS = { encounters: "encounters", active: "activeEncounter" };
+const SOCKET = `module.${MODULE_ID}`;
+const SCHEMA_VERSION = 2;
+const MAX_HISTORY = 30;
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
 const CHECK_CHOICES = [
@@ -44,17 +47,27 @@ function newEncounter() {
   const id = randomID();
   return {
     id, name: "New Non-Combat Encounter", type: "social", status: "draft",
-    image: "icons/svg/d20-black.svg", description: "", participantIds: [],
-    currentRound: 1, roundLimit: 0, targets: [newTarget("social")], createdAt: Date.now(), updatedAt: Date.now()
+    schemaVersion: SCHEMA_VERSION, image: "icons/svg/d20-black.svg", description: "", participantIds: [],
+    currentRound: 1, roundLimit: 0, targets: [newTarget("social")], activeActorId: "", activeTargetId: "",
+    actorsActed: {}, pendingRequests: [], log: [], history: [], dcVisibility: "hidden",
+    createdAt: Date.now(), updatedAt: Date.now()
   };
 }
 
 function normalize(encounter) {
+  encounter.schemaVersion = SCHEMA_VERSION;
   encounter.type = TYPE_LABELS[encounter.type] ? encounter.type : "social";
-  encounter.status = ["draft", "active", "paused"].includes(encounter.status) ? encounter.status : "draft";
+  encounter.status = ["draft", "active", "paused", "ended"].includes(encounter.status) ? encounter.status : "draft";
   encounter.participantIds = Array.isArray(encounter.participantIds) ? encounter.participantIds : [];
   encounter.currentRound = Math.max(1, Number(encounter.currentRound) || 1);
   encounter.roundLimit = Math.max(0, Number(encounter.roundLimit) || 0);
+  encounter.activeActorId ??= "";
+  encounter.activeTargetId ??= "";
+  encounter.actorsActed = encounter.actorsActed && typeof encounter.actorsActed === "object" ? encounter.actorsActed : {};
+  encounter.pendingRequests = indexedArray(encounter.pendingRequests);
+  encounter.log = indexedArray(encounter.log);
+  encounter.history = indexedArray(encounter.history);
+  encounter.dcVisibility = ["hidden", "relative", "exact"].includes(encounter.dcVisibility) ? encounter.dcVisibility : "hidden";
   encounter.targets = indexedArray(encounter.targets);
   encounter.targets.forEach((target) => {
     target.id ||= randomID(); target.name ||= "New Target"; target.image ||= "icons/svg/mystery-man.svg";
@@ -66,18 +79,61 @@ function normalize(encounter) {
       check.guidance ??= ""; check.dc = Math.max(0, Number(check.dc) || 0);
     });
   });
+  if (!encounter.targets.some((target) => target.id === encounter.activeTargetId)) encounter.activeTargetId = encounter.targets[0]?.id ?? "";
+  if (!encounter.participantIds.includes(encounter.activeActorId)) encounter.activeActorId = "";
   return encounter;
 }
 
+function participantActors(encounter) {
+  return (encounter?.participantIds ?? []).map((id) => game.actors.get(id)).filter(Boolean);
+}
+
+function canControlActor(actor, user = game.user) {
+  return !!actor && (user?.isGM || actor.testUserPermission(user, CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER));
+}
+
+function snapshotEncounter(encounter, label) {
+  const state = clone(encounter);
+  delete state.history;
+  encounter.history.push({ id: randomID(), label, at: Date.now(), userId: game.user.id, state });
+  if (encounter.history.length > MAX_HISTORY) encounter.history.splice(0, encounter.history.length - MAX_HISTORY);
+}
+
+function addLog(encounter, type, text, details = {}) {
+  encounter.log.push({ id: randomID(), at: Date.now(), round: encounter.currentRound, type, text, userId: game.user.id, ...details });
+}
+
+function publicEncounter(encounter) {
+  if (!encounter) return null;
+  const safe = clone(encounter);
+  delete safe.history;
+  safe.pendingRequests = [];
+  safe.targets = safe.targets.map((target) => ({
+    ...target,
+    checks: target.checks.map((check) => ({
+      id: check.id, key: check.key, label: check.label, guidance: check.guidance,
+      ...(safe.dcVisibility === "exact" ? { dc: check.dc } : {})
+    }))
+  }));
+  return safe;
+}
+
+let playerEncounterCache = null;
+
 const Store = {
   all() { return clone(game.settings.get(MODULE_ID, SETTINGS.encounters) ?? {}); },
-  get(id = this.activeId()) { const encounter = this.all()[id]; return encounter ? normalize(encounter) : null; },
+  get(id = this.activeId()) {
+    if (!game.user.isGM) return playerEncounterCache && (!id || playerEncounterCache.id === id) ? normalize(clone(playerEncounterCache)) : null;
+    const encounter = this.all()[id];
+    return encounter ? normalize(encounter) : null;
+  },
   activeId() { return game.settings.get(MODULE_ID, SETTINGS.active) || ""; },
   async save(encounter) {
     encounter.updatedAt = Date.now(); normalize(encounter);
     const records = this.all(); records[encounter.id] = encounter;
     await game.settings.set(MODULE_ID, SETTINGS.encounters, records);
     Hooks.callAll("nonCombatEncounterUpdated", encounter.id);
+    if (game.user.isGM && encounter.id === this.activeId()) game.socket.emit(SOCKET, { action: "sync", encounter: publicEncounter(encounter) });
   },
   async remove(id) {
     const records = this.all(); delete records[id];
@@ -85,8 +141,27 @@ const Store = {
     if (this.activeId() === id) await game.settings.set(MODULE_ID, SETTINGS.active, "");
     Hooks.callAll("nonCombatEncounterUpdated", id);
   },
-  async setActive(id) { await game.settings.set(MODULE_ID, SETTINGS.active, id); Hooks.callAll("nonCombatEncounterUpdated", id); }
+  async setActive(id) {
+    await game.settings.set(MODULE_ID, SETTINGS.active, id);
+    Hooks.callAll("nonCombatEncounterUpdated", id);
+    if (game.user.isGM) game.socket.emit(SOCKET, { action: "sync", encounter: publicEncounter(this.get(id)) });
+  }
 };
+
+async function migrateEncounters() {
+  if (!game.user.isGM) return;
+  const records = Store.all();
+  let changed = false;
+  for (const [id, source] of Object.entries(records)) {
+    if ((Number(source.schemaVersion) || 0) >= SCHEMA_VERSION) continue;
+    records[id] = normalize(source);
+    changed = true;
+  }
+  if (changed) {
+    await game.settings.set(MODULE_ID, SETTINGS.encounters, records);
+    ui.notifications.info("Non-Combat Encounters data was updated to the current schema.");
+  }
+}
 
 async function createEncounter() {
   const encounter = newEncounter();
@@ -101,6 +176,7 @@ async function activateEncounter(id) {
   await Store.save(encounter);
   await Store.setActive(encounter.id);
   tracker.render(true);
+  game.socket.emit(SOCKET, { action: "open", encounter: publicEncounter(encounter) });
 }
 
 async function pauseEncounter(id) {
@@ -116,12 +192,98 @@ async function resumeEncounter(id) {
   await activateEncounter(id);
 }
 
+function journalHtml(encounter) {
+  const targets = encounter.targets.map((target) => `<section><h2>${esc(target.name)}</h2>${target.description ? `<p>${esc(target.description)}</p>` : ""}<p><strong>Progress:</strong> ${target.points}${target.goal ? ` / ${target.goal}` : ""}</p></section>`).join("");
+  const log = encounter.log.length ? `<h2>Encounter Log</h2><ul>${encounter.log.map((entry) => `<li><strong>Round ${entry.round}:</strong> ${esc(entry.text)}</li>`).join("")}</ul>` : "";
+  return `<h1>${esc(encounter.name)}</h1><p>${esc(encounter.description)}</p>${targets}${log}`;
+}
+
+async function endEncounter(id) {
+  if (!game.user.isGM) return;
+  const encounter = Store.get(id);
+  if (!encounter) return;
+  snapshotEncounter(encounter, "Before ending encounter");
+  encounter.status = "ended";
+  addLog(encounter, "lifecycle", "The encounter ended.");
+  await Store.save(encounter);
+  const existing = game.journal.find((journal) => journal.getFlag(MODULE_ID, "encounterId") === encounter.id);
+  const data = { name: encounter.name, pages: [{ name: "Summary", type: "text", text: { content: journalHtml(encounter), format: 1 } }], flags: { [MODULE_ID]: { encounterId: encounter.id } } };
+  if (existing) await existing.update({ name: data.name, pages: data.pages });
+  else await JournalEntry.create(data);
+  await Store.setActive("");
+  tracker.close();
+  game.socket.emit(SOCKET, { action: "closed", encounterId: encounter.id });
+  ui.notifications.info(`${encounter.name} ended and was published to the Journal.`);
+}
+
+async function mutateActive(label, callback) {
+  if (!game.user.isGM) return;
+  const encounter = Store.get();
+  if (!encounter) return;
+  snapshotEncounter(encounter, label);
+  await callback(encounter);
+  await Store.save(encounter);
+}
+
+async function undoActiveEncounter() {
+  if (!game.user.isGM) return;
+  const encounter = Store.get();
+  const previous = encounter?.history.pop();
+  if (!encounter || !previous?.state) return ui.notifications.warn("There is nothing to undo.");
+  const remainingHistory = encounter.history;
+  const restored = normalize(clone(previous.state));
+  restored.history = remainingHistory;
+  addLog(restored, "undo", `Undid: ${previous.label}.`);
+  await Store.save(restored);
+}
+
+async function handlePlayerRequest(payload) {
+  if (!game.user.isGM) return;
+  const encounter = Store.get(payload.encounterId);
+  const user = game.users.get(payload.userId);
+  const actor = game.actors.get(payload.actorId);
+  const target = encounter?.targets.find((entry) => entry.id === payload.targetId);
+  const check = target?.checks.find((entry) => entry.id === payload.checkId);
+  if (!encounter || encounter.status !== "active" || !user || !canControlActor(actor, user) || !encounter.participantIds.includes(actor.id) || !target || !check) return;
+  if (encounter.actorsActed[actor.id]) return;
+  const duplicate = encounter.pendingRequests.some((request) => request.actorId === actor.id && request.status === "pending");
+  if (duplicate) return;
+  snapshotEncounter(encounter, "Queued check request");
+  encounter.pendingRequests.push({ id: randomID(), status: "pending", createdAt: Date.now(), userId: user.id, actorId: actor.id, actorName: actor.name, targetId: target.id, targetName: target.name, checkId: check.id, checkLabel: check.label });
+  encounter.activeActorId = actor.id;
+  encounter.activeTargetId = target.id;
+  addLog(encounter, "request", `${actor.name} requested ${check.label} against ${target.name}.`, { actorId: actor.id, targetId: target.id, checkId: check.id });
+  await Store.save(encounter);
+  ui.notifications.info(`${actor.name} requested a ${check.label} check.`);
+}
+
+function handleSocketMessage(message) {
+  if (!message?.action) return;
+  if (message.action === "request") return handlePlayerRequest(message);
+  if (message.action === "request-sync" && game.user.isGM) return game.socket.emit(SOCKET, { action: "sync", encounter: publicEncounter(Store.get()) });
+  if (message.action === "sync" && !game.user.isGM) {
+    const shouldOpen = !playerEncounterCache && message.encounter?.status === "active";
+    playerEncounterCache = message.encounter ? normalize(message.encounter) : null;
+    Hooks.callAll("nonCombatEncounterUpdated", playerEncounterCache?.id ?? "");
+    if (shouldOpen) tracker?.render(true);
+  }
+  if (message.action === "open" && !game.user.isGM) {
+    playerEncounterCache = message.encounter ? normalize(message.encounter) : null;
+    tracker?.render(true);
+  }
+  if (message.action === "closed" && !game.user.isGM) {
+    playerEncounterCache = null;
+    tracker?.close();
+  }
+}
+
 async function deleteEncounter(id) {
   const confirmed = await foundry.applications.api.DialogV2.confirm({
     window: { title: "Delete Encounter" },
     content: "<p>Delete this encounter permanently?</p>"
   });
   if (!confirmed) return;
+  if (Store.activeId() === id) await endEncounter(id);
   await Store.remove(id);
   tracker.render(false);
 }
@@ -164,7 +326,7 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     const selected = new Set(this.encounter.participantIds);
     const actors = game.actors.filter((actor) => actor.type === "character").map((actor) => ({ id: actor.id, name: actor.name, image: actor.img, selected: selected.has(actor.id) }));
     const dropLabels = { social: "targets", research: "sources", chase: "obstacles", exploration: "locations", skill: "challenges" };
-    return { ...context, encounter: this.encounter, actors, typeLabels: TYPE_LABELS, checkChoices: Object.fromEntries(CHECK_CHOICES), dropLabel: dropLabels[this.encounter.type] };
+    return { ...context, encounter: this.encounter, actors, typeLabels: TYPE_LABELS, checkChoices: Object.fromEntries(CHECK_CHOICES), dcVisibilities: { hidden: "Hidden", relative: "Relative difficulty", exact: "Exact DCs" }, dropLabel: dropLabels[this.encounter.type] };
   }
   async _onRender(context, options) {
     await super._onRender(context, options);
@@ -235,16 +397,90 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
   static async removeCheck(_event, target) { this._capture(); this.encounter.targets[Number(target.dataset.targetIndex)]?.checks.splice(Number(target.dataset.index), 1); await this.render({ force: true }); }
 }
 
+let viewActorId = "";
+let viewTargetId = "";
+
 class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
-  static DEFAULT_OPTIONS = { id: "dnd5e-nce-tracker", classes: ["dnd5e-nce"], position: { width: 680, height: 680 }, window: { title: "Non-Combat Encounter", icon: "fa-solid fa-people-group", resizable: true }, actions: { manage: EncounterTracker.manage } };
+  static DEFAULT_OPTIONS = {
+    id: "dnd5e-nce-tracker", classes: ["dnd5e-nce"], position: { width: 760, height: 760 },
+    window: { title: "Non-Combat Encounter", icon: "fa-solid fa-people-group", resizable: true },
+    actions: {
+      manage: EncounterTracker.manage, selectActor: EncounterTracker.selectActor, selectTarget: EncounterTracker.selectTarget,
+      requestCheck: EncounterTracker.requestCheck, adjustPoints: EncounterTracker.adjustPoints, nextRound: EncounterTracker.nextRound,
+      completeRequest: EncounterTracker.completeRequest, cancelRequest: EncounterTracker.cancelRequest,
+      undo: EncounterTracker.undo, pause: EncounterTracker.pause, end: EncounterTracker.end
+    }
+  };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/tracker.hbs` } };
   async _prepareContext(options) {
-    const context = await super._prepareContext(options); const encounter = Store.get();
-    const participants = encounter?.participantIds.map((id) => game.actors.get(id)).filter(Boolean).map((actor) => ({ name: actor.name, image: actor.img })) ?? [];
-    if (encounter) encounter.targets = encounter.targets.map((target) => ({ ...target, progressPct: target.goal ? Math.min(100, Math.max(0, Math.round((target.points / target.goal) * 100))) : 0 }));
-    return { ...context, encounter, participants, typeLabel: encounter ? TYPE_LABELS[encounter.type] : "", noEncounter: !encounter, isGM: game.user.isGM };
+    const context = await super._prepareContext(options);
+    const encounter = Store.get();
+    const owned = encounter ? participantActors(encounter).filter((actor) => canControlActor(actor)) : [];
+    if (encounter && !owned.some((actor) => actor.id === viewActorId)) viewActorId = owned[0]?.id ?? "";
+    if (encounter && !encounter.targets.some((target) => target.id === viewTargetId)) viewTargetId = encounter.activeTargetId || encounter.targets[0]?.id || "";
+    const participants = encounter ? participantActors(encounter).map((actor) => ({ id: actor.id, name: actor.name, image: actor.img, owned: canControlActor(actor), acted: !!encounter.actorsActed[actor.id], selected: actor.id === viewActorId })) : [];
+    if (encounter) encounter.targets = encounter.targets.map((target) => ({ ...target, selected: target.id === viewTargetId, progressPct: target.goal ? Math.min(100, Math.max(0, Math.round((target.points / target.goal) * 100))) : 0 }));
+    const selectedTarget = encounter?.targets.find((target) => target.id === viewTargetId);
+    const selectedActor = participants.find((actor) => actor.id === viewActorId);
+    const pendingRequests = game.user.isGM ? encounter?.pendingRequests.filter((request) => request.status === "pending") ?? [] : [];
+    return { ...context, encounter, participants, selectedTarget, selectedActor, pendingRequests, typeLabel: encounter ? TYPE_LABELS[encounter.type] : "", noEncounter: !encounter, isGM: game.user.isGM, canRequest: encounter?.status === "active" && !!selectedActor && !selectedActor.acted, showDC: game.user.isGM || encounter?.dcVisibility === "exact", hasUndo: game.user.isGM && !!encounter?.history.length };
   }
-  static manage() { manager.render({ force: true }); }
+  static manage() { const encounter = Store.get(); if (encounter) new EncounterEditor(encounter).render({ force: true }); else manager.render({ force: true }); }
+  static selectActor(_event, target) { viewActorId = target.dataset.id; this.render({ force: true }); }
+  static selectTarget(_event, target) { viewTargetId = target.dataset.id; this.render({ force: true }); }
+  static requestCheck(_event, target) {
+    const encounter = Store.get();
+    const actor = game.actors.get(viewActorId);
+    const selectedTarget = encounter?.targets.find((entry) => entry.id === viewTargetId);
+    const check = selectedTarget?.checks.find((entry) => entry.id === target.dataset.checkId);
+    if (!encounter || !actor || !check || !canControlActor(actor) || encounter.actorsActed[actor.id]) return ui.notifications.warn("Choose an eligible character who has not acted.");
+    const request = { action: "request", encounterId: encounter.id, userId: game.user.id, actorId: actor.id, targetId: selectedTarget.id, checkId: check.id };
+    if (game.user.isGM) handlePlayerRequest(request);
+    else game.socket.emit(SOCKET, request);
+    ui.notifications.info(`Requested ${check.label} for ${actor.name}.`);
+  }
+  static async adjustPoints(_event, target) {
+    const targetId = target.dataset.id;
+    const delta = Number(target.dataset.delta) || 0;
+    await mutateActive(`${delta >= 0 ? "Added" : "Removed"} ${Math.abs(delta)} point`, async (encounter) => {
+      const entry = encounter.targets.find((item) => item.id === targetId);
+      if (!entry) return;
+      entry.points = Math.max(0, entry.points + delta);
+      addLog(encounter, "points", `${entry.name}: ${delta >= 0 ? "+" : ""}${delta} point${Math.abs(delta) === 1 ? "" : "s"}.`, { targetId });
+    });
+  }
+  static async nextRound() {
+    await mutateActive("Advanced round", async (encounter) => {
+      encounter.currentRound += 1;
+      encounter.actorsActed = {};
+      for (const request of encounter.pendingRequests) if (request.status === "pending") request.status = "cancelled";
+      addLog(encounter, "round", `Advanced to round ${encounter.currentRound}.`);
+    });
+  }
+  static async completeRequest(_event, target) {
+    await mutateActive("Completed check request", async (encounter) => {
+      const request = encounter.pendingRequests.find((entry) => entry.id === target.dataset.id);
+      if (!request) return;
+      request.status = "completed";
+      request.completedAt = Date.now();
+      encounter.actorsActed[request.actorId] = true;
+      addLog(encounter, "action", `${request.actorName} completed ${request.checkLabel} against ${request.targetName}.`, request);
+    });
+  }
+  static async cancelRequest(_event, target) {
+    await mutateActive("Cancelled check request", async (encounter) => {
+      const request = encounter.pendingRequests.find((entry) => entry.id === target.dataset.id);
+      if (!request) return;
+      request.status = "cancelled";
+      addLog(encounter, "request", `Cancelled ${request.actorName}'s ${request.checkLabel} request.`, request);
+    });
+  }
+  static async undo() { await undoActiveEncounter(); }
+  static async pause() { await pauseEncounter(Store.activeId()); }
+  static async end() {
+    const confirmed = await foundry.applications.api.DialogV2.confirm({ window: { title: "End & Publish" }, content: "<p>End this encounter and publish its summary and log to the Journal?</p>" });
+    if (confirmed) await endEncounter(Store.activeId());
+  }
 }
 
 let tracker;
@@ -357,11 +593,17 @@ Hooks.once("init", () => {
   game.settings.register(MODULE_ID, SETTINGS.active, { scope: "world", config: false, type: String, default: "" });
 });
 
-Hooks.once("ready", () => {
+Hooks.once("ready", async () => {
   tracker = new EncounterTracker();
   manager = new EncounterManager();
   game[MODULE_ID] = { open: () => tracker.render(true), manage: () => manager.render({ force: true }), Store };
+  game.socket.on(SOCKET, handleSocketMessage);
+  await migrateEncounters();
   renderEncounterSidebar();
+  if (game.user.isGM) {
+    const active = Store.get();
+    if (active?.status === "active") tracker.render(true);
+  } else game.socket.emit(SOCKET, { action: "request-sync", userId: game.user.id });
 });
 
 Hooks.on("nonCombatEncounterUpdated", () => { tracker?.render(false); manager?.render(false); renderEncounterSidebar(); });

@@ -34,7 +34,28 @@
 .nce-tracker > header h2, .nce-tracker > header p { margin: 0; }
 .nce-roster { display: flex; flex-wrap: wrap; gap: .5rem; padding: 0; list-style: none; }
 .nce-roster li { display: flex; gap: .35rem; align-items: center; padding: .3rem .5rem; background: var(--nce-panel); border-radius: 999px; }
+.nce-roster li.acted { opacity: .48; filter: grayscale(1); }
 .nce-roster img { width: 24px; height: 24px; object-fit: cover; border: 0; border-radius: 50%; }
+.nce-choice-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: .4rem; }
+.nce-choice-grid button { display: flex; align-items: center; justify-content: flex-start; gap: .4rem; min-width: 0; height: auto; padding: .35rem .5rem; text-align: left; }
+.nce-choice-grid button.selected { outline: 2px solid var(--color-border-highlight); background: color-mix(in srgb, var(--nce-accent) 22%, transparent); }
+.nce-choice-grid button.acted { opacity: .45; filter: grayscale(1); }
+.nce-choice-grid img { width: 32px; height: 32px; flex: 0 0 32px; border: 0; border-radius: 50%; object-fit: cover; }
+.nce-active-target { margin-top: .8rem; padding: .8rem; border: 1px solid var(--color-border-light-2); border-radius: 8px; }
+.nce-active-target > header { display: grid; grid-template-columns: 64px 1fr; gap: .75rem; align-items: center; }
+.nce-active-target > header img { width: 64px; height: 64px; border: 0; border-radius: 8px; object-fit: cover; }
+.nce-active-target h3, .nce-active-target p { margin-block: .2rem; }
+.nce-points { text-align: center; }
+.nce-inline-actions { display: flex; justify-content: center; gap: .4rem; }
+.nce-runtime-checks { display: grid; gap: .4rem; }
+.nce-runtime-check { display: grid; grid-template-columns: 1fr auto; gap: .6rem; align-items: center; padding: .55rem; background: var(--nce-panel); border-radius: 6px; }
+.nce-runtime-check p, .nce-requests p { margin: .15rem 0 0; }
+.nce-requests article { display: grid; grid-template-columns: 1fr auto auto; gap: .4rem; align-items: center; padding: .55rem; margin-bottom: .35rem; border: 1px solid var(--color-border-light-2); border-radius: 6px; }
+.nce-log { margin-top: .8rem; padding: .55rem; border: 1px solid var(--color-border-light-2); border-radius: 6px; }
+.nce-log summary { cursor: pointer; font-weight: 700; }
+.nce-runtime-footer { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: 1rem; }
+.nce-runtime-footer button { flex: 1 1 130px; }
+.nce-runtime-footer .danger { color: var(--color-level-error, #d33); }
 .nce-tracker-target { display: grid; grid-template-columns: 64px 1fr; gap: .75rem; padding: .75rem; margin-bottom: .65rem; border: 1px solid var(--color-border-light-2); border-radius: 8px; }
 .nce-tracker-target h4, .nce-tracker-target p { margin-top: 0; }
 .nce-progress { height: 8px; overflow: hidden; background: #0005; border-radius: 999px; }
