@@ -14,6 +14,7 @@
 - Added DC adjudication, optional ±5 critical outcomes, styled result cards, and complete roll audit details.
 - Completed the first Social Encounter vertical slice with nicknames, background/appearance/personality notes, cinematic portraits, optional target clocks, configurable point awards, thresholds, and player-visible rewards.
 - Added weaknesses, resistances, circumstances, conditional and limited-use modifiers, cross-target point rewards, GM-controlled reward activation, and threshold gain/loss chat notices.
+- Generalized thresholds and rewards for every encounter type, including item links, currency rewards, manual reveal/hide controls, and item/currency detail in chat and Journal summaries.
 
 ## 0.0.1 — 2026-09-16
 

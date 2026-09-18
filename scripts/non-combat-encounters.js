@@ -1,7 +1,7 @@
 const MODULE_ID = "dnd5e-non-combat-encounters";
 const SETTINGS = { encounters: "encounters", active: "activeEncounter" };
 const SOCKET = `module.${MODULE_ID}`;
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const MAX_HISTORY = 30;
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -58,7 +58,7 @@ function newSocialModifier(kind = "circumstance") {
 }
 
 function newReward(targetId = "") {
-  return { id: randomID(), kind: "narrative", label: "New Reward", description: "", playerVisible: true, activation: "automatic", active: true, effect: "bonus", value: 1, targetId, checkKey: "", conditional: false, uses: 0, remaining: 0, applied: false };
+  return { id: randomID(), kind: "narrative", label: "New Reward", description: "", playerVisible: true, activation: "automatic", active: true, effect: "bonus", value: 1, targetId, checkKey: "", conditional: false, uses: 0, remaining: 0, applied: false, itemUuid: "", itemName: "", itemImage: "", currency: "gp" };
 }
 
 function newThreshold(targetId = "") {
@@ -68,7 +68,7 @@ function newThreshold(targetId = "") {
 function newTarget(type = "social") {
   const names = { social: "New NPC", research: "New Source", chase: "New Obstacle", exploration: "New Location", skill: "New Challenge" };
   const id = randomID();
-  return { id, sourceUuid: "", sourceType: "", name: names[type], nickname: "", image: "icons/svg/mystery-man.svg", description: "", background: "", appearance: "", personality: "", gmNotes: "", playerNotes: "", points: 0, goal: 4, checks: [newCheck()], modifiers: [], thresholds: type === "social" ? [newThreshold(id)] : [] };
+  return { id, sourceUuid: "", sourceType: "", name: names[type], nickname: "", image: "icons/svg/mystery-man.svg", description: "", background: "", appearance: "", personality: "", gmNotes: "", playerNotes: "", points: 0, goal: 4, checks: [newCheck()], modifiers: [], thresholds: [newThreshold(id)] };
 }
 
 function newEncounter() {
@@ -133,10 +133,10 @@ function normalizeModifier(modifier) {
 }
 
 function normalizeReward(reward, targetId = "") {
-  reward.id ||= randomID(); reward.kind = ["narrative", "modifier", "points"].includes(reward.kind) ? reward.kind : "narrative"; reward.label ||= "Reward"; reward.description ??= "";
+  reward.id ||= randomID(); reward.kind = ["narrative", "modifier", "points", "item", "currency"].includes(reward.kind) ? reward.kind : "narrative"; reward.label ||= "Reward"; reward.description ??= "";
   reward.playerVisible = reward.playerVisible !== false && reward.playerVisible !== "false"; reward.activation = reward.activation === "manual" ? "manual" : "automatic"; reward.active = reward.active == null ? reward.activation === "automatic" : truthy(reward.active);
   reward.effect = ["bonus", "dc", "advantage", "disadvantage"].includes(reward.effect) ? reward.effect : "bonus"; reward.value = Number(reward.value) || 0;
-  reward.targetId ||= targetId; reward.checkKey ??= ""; reward.conditional = truthy(reward.conditional); reward.uses = Math.max(0, Number(reward.uses) || 0); reward.remaining = Math.max(0, Number(reward.remaining ?? reward.uses) || 0); reward.applied = truthy(reward.applied);
+  reward.targetId ||= targetId; reward.checkKey ??= ""; reward.conditional = truthy(reward.conditional); reward.uses = Math.max(0, Number(reward.uses) || 0); reward.remaining = Math.max(0, Number(reward.remaining ?? reward.uses) || 0); reward.applied = truthy(reward.applied); reward.itemUuid ??= ""; reward.itemName ??= ""; reward.itemImage ??= ""; reward.currency = ["cp", "sp", "ep", "gp", "pp"].includes(reward.currency) ? reward.currency : "gp";
   return reward;
 }
 
@@ -177,6 +177,12 @@ function degreeFor(total, dc, criticalMode) {
 
 function displayName(record) {
   return String(record?.nickname ?? "").trim() || record?.name || "Unknown";
+}
+
+function rewardDetail(reward) {
+  if (reward.kind === "item") return reward.itemName || reward.label;
+  if (reward.kind === "currency") return `${Number(reward.value) || 0} ${reward.currency ?? "gp"}`;
+  return reward.description ?? "";
 }
 
 function unlockedRewards(encounter) {
@@ -225,7 +231,7 @@ function publicEncounter(encounter) {
       id: check.id, key: check.key, label: check.label, guidance: check.guidance,
       ...(safe.dcVisibility === "exact" ? { dc: check.dc } : {})
     })),
-    thresholds: target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => ({ id: threshold.id, points: threshold.points, label: threshold.label, text: threshold.text, rewards: threshold.rewards.filter((reward) => reward.playerVisible).map((reward) => ({ id: reward.id, kind: reward.kind, label: reward.label, description: reward.description, active: reward.active })) }))
+    thresholds: target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => ({ id: threshold.id, points: threshold.points, label: threshold.label, text: threshold.text, rewards: threshold.rewards.filter((reward) => reward.playerVisible && reward.active).map((reward) => ({ id: reward.id, kind: reward.kind, label: reward.label, description: rewardDetail(reward), active: reward.active })) }))
   }));
   return safe;
 }
@@ -305,7 +311,7 @@ async function resumeEncounter(id) {
 
 function journalHtml(encounter) {
   const targets = encounter.targets.map((target) => {
-    const thresholds = target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => `<li><strong>${esc(threshold.label)}</strong>${threshold.text ? ` — ${esc(threshold.text)}` : ""}${threshold.rewards.length ? `<ul>${threshold.rewards.map((reward) => `<li><strong>${esc(reward.label)}</strong>${reward.description ? ` — ${esc(reward.description)}` : ""}</li>`).join("")}</ul>` : ""}</li>`).join("");
+    const thresholds = target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => `<li><strong>${esc(threshold.label)}</strong>${threshold.text ? ` — ${esc(threshold.text)}` : ""}${threshold.rewards.length ? `<ul>${threshold.rewards.map((reward) => `<li><strong>${esc(reward.label)}</strong>${rewardDetail(reward) ? ` — ${esc(rewardDetail(reward))}` : ""}</li>`).join("")}</ul>` : ""}</li>`).join("");
     return `<section><h2>${esc(displayName(target))}</h2>${target.description ? `<p>${esc(target.description)}</p>` : ""}${target.background ? `<p><strong>Background:</strong> ${esc(target.background)}</p>` : ""}${target.appearance ? `<p><strong>Appearance:</strong> ${esc(target.appearance)}</p>` : ""}${target.personality ? `<p><strong>Personality:</strong> ${esc(target.personality)}</p>` : ""}<p><strong>Progress:</strong> ${target.points}${target.goal ? ` / ${target.goal}` : ""}</p>${thresholds ? `<h3>Unlocked Rewards</h3><ul>${thresholds}</ul>` : ""}</section>`;
   }).join("");
   const log = encounter.log.length ? `<h2>Encounter Log</h2><ul>${encounter.log.map((entry) => `<li><strong>Round ${entry.round}:</strong> ${esc(entry.text)}</li>`).join("")}</ul>` : "";
@@ -450,7 +456,7 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
       targetChoices: Object.fromEntries([["", "This target"], ...this.encounter.targets.map((target) => [target.id, displayName(target)])]),
       dcVisibilities: { hidden: "Hidden", relative: "Relative difficulty", exact: "Exact DCs" }, criticalModes: { none: "No automatic critical results", margin5: "Critical success/failure at DC ±5" },
       modifierKinds: { weakness: "Weakness", resistance: "Resistance", circumstance: "Circumstance" }, modifierEffects: { bonus: "Roll bonus/penalty", dc: "DC adjustment", advantage: "Advantage", disadvantage: "Disadvantage" },
-      rewardKinds: { narrative: "Narrative or item reward", modifier: "Mechanical modifier", points: "Points against a target" }, rewardActivations: { automatic: "Automatic", manual: "GM activates" }, dropLabel: dropLabels[this.encounter.type]
+      rewardKinds: { narrative: "Narrative reward", item: "Item reward", currency: "Currency reward", modifier: "Mechanical modifier", points: "Points against a target" }, rewardActivations: { automatic: "Automatic", manual: "GM activates" }, currencies: { cp: "Copper (cp)", sp: "Silver (sp)", ep: "Electrum (ep)", gp: "Gold (gp)", pp: "Platinum (pp)" }, dropLabel: dropLabels[this.encounter.type]
     };
   }
   async _onRender(context, options) {
@@ -461,6 +467,12 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
       zone.addEventListener("dragover", (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; zone.classList.add("dragover"); });
       zone.addEventListener("dragleave", (event) => { if (!zone.contains(event.relatedTarget)) zone.classList.remove("dragover"); });
       zone.addEventListener("drop", (event) => this._onTargetDrop(event));
+    }
+    for (const rewardZone of this.element.querySelectorAll("[data-reward-drop-zone]")) {
+      rewardZone.addEventListener("dragenter", (event) => { event.preventDefault(); rewardZone.classList.add("dragover"); });
+      rewardZone.addEventListener("dragover", (event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; rewardZone.classList.add("dragover"); });
+      rewardZone.addEventListener("dragleave", (event) => { if (!rewardZone.contains(event.relatedTarget)) rewardZone.classList.remove("dragover"); });
+      rewardZone.addEventListener("drop", (event) => this._onRewardDrop(event));
     }
     for (const row of this.element.querySelectorAll(".nce-check-row")) {
       const select = row.querySelector('select[name$=".key"]');
@@ -503,6 +515,30 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     }
     this.encounter.targets.push(created);
     ui.notifications.info(`Added ${created.name} from the ${dropped.documentName} directory.`);
+    await this.render({ force: true });
+  }
+  async _onRewardDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.classList.remove("dragover");
+    let data = {};
+    try { data = TextEditor.getDragEventData(event); }
+    catch (_error) { try { data = JSON.parse(event.dataTransfer?.getData("text/plain") || "{}"); } catch (_parseError) { return; } }
+    let item = data.uuid ? await fromUuid(data.uuid) : null;
+    if (!item && data.itemId) item = game.items.get(data.itemId);
+    if (!item || item.documentName !== "Item") return ui.notifications.warn("Drop an Item from the Foundry Items directory.");
+    this._capture();
+    const targetIndex = Number(event.currentTarget.dataset.targetIndex);
+    const thresholdIndex = Number(event.currentTarget.dataset.thresholdIndex);
+    const rewardIndex = Number(event.currentTarget.dataset.rewardIndex);
+    const reward = this.encounter.targets[targetIndex]?.thresholds[thresholdIndex]?.rewards[rewardIndex];
+    if (!reward) return;
+    reward.kind = "item";
+    reward.itemUuid = item.uuid ?? "";
+    reward.itemName = item.name ?? "Item";
+    reward.itemImage = item.img ?? "";
+    reward.label = item.name ?? reward.label;
+    ui.notifications.info(`Linked ${reward.itemName} as a reward.`);
     await this.render({ force: true });
   }
   _capture() {
@@ -644,8 +680,8 @@ async function postResultCard(encounter, result, choice) {
 
 async function postThresholdCards(target, gained, lost) {
   for (const threshold of gained) {
-    const rewards = threshold.rewards.filter((reward) => reward.playerVisible);
-    await ChatMessage.create({ content: `<div class="dnd5e-nce-threshold gained"><h3>${esc(displayName(target))}: ${esc(threshold.label)}</h3><p>${esc(threshold.text)}</p>${rewards.length ? `<ul>${rewards.map((reward) => `<li><strong>${esc(reward.label)}</strong>${reward.description ? ` — ${esc(reward.description)}` : ""}</li>`).join("")}</ul>` : ""}</div>` });
+    const rewards = threshold.rewards.filter((reward) => reward.playerVisible && reward.active);
+    await ChatMessage.create({ content: `<div class="dnd5e-nce-threshold gained"><h3>${esc(displayName(target))}: ${esc(threshold.label)}</h3><p>${esc(threshold.text)}</p>${rewards.length ? `<ul>${rewards.map((reward) => `<li><strong>${esc(reward.label)}</strong>${rewardDetail(reward) ? ` — ${esc(rewardDetail(reward))}` : ""}</li>`).join("")}</ul>` : ""}</div>` });
   }
   for (const threshold of lost) await ChatMessage.create({ content: `<div class="dnd5e-nce-threshold lost"><h3>Reward Lost: ${esc(threshold.label)}</h3><p>${esc(displayName(target))}'s progress fell below ${threshold.points} points.</p></div>` });
 }
@@ -670,7 +706,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     if (encounter && !owned.some((actor) => actor.id === viewActorId)) viewActorId = owned[0]?.id ?? "";
     if (encounter && !encounter.targets.some((target) => target.id === viewTargetId)) viewTargetId = encounter.activeTargetId || encounter.targets[0]?.id || "";
     const participants = encounter ? participantActors(encounter).map((actor) => ({ id: actor.id, name: actor.name, displayName: encounter.participantNicknames[actor.id]?.trim() || actor.name, image: actor.img, owned: canControlActor(actor), acted: !!encounter.actorsActed[actor.id], selected: actor.id === viewActorId })) : [];
-    if (encounter) encounter.targets = encounter.targets.map((target) => ({ ...target, displayName: displayName(target), selected: target.id === viewTargetId, progressPct: target.goal ? Math.min(100, Math.max(0, Math.round((target.points / target.goal) * 100))) : 0, unlockedThresholds: target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => ({ ...threshold, rewards: threshold.rewards.filter((reward) => game.user.isGM || reward.playerVisible) })) }));
+    if (encounter) encounter.targets = encounter.targets.map((target) => ({ ...target, displayName: displayName(target), selected: target.id === viewTargetId, progressPct: target.goal ? Math.min(100, Math.max(0, Math.round((target.points / target.goal) * 100))) : 0, unlockedThresholds: target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => ({ ...threshold, rewards: threshold.rewards.filter((reward) => game.user.isGM || (reward.playerVisible && reward.active)).map((reward) => ({ ...reward, description: rewardDetail(reward) })) })) }));
     const selectedTarget = encounter?.targets.find((target) => target.id === viewTargetId);
     const selectedActor = participants.find((actor) => actor.id === viewActorId);
     if (selectedTarget && selectedActor) selectedTarget.checks = selectedTarget.checks.map((check) => ({ ...check, actorModifier: signed(actorCheckModifier(game.actors.get(selectedActor.id), check.key)) }));
@@ -721,12 +757,16 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     if (updatedTarget) await postThresholdCards(updatedTarget, gained, lost);
   }
   static async toggleReward(_event, target) {
+    let changed;
     await mutateActive("Changed reward activation", async (encounter) => {
       const reward = encounter.targets.flatMap((entry) => entry.thresholds.flatMap((threshold) => threshold.rewards)).find((entry) => entry.id === target.dataset.id);
       if (!reward) return;
       reward.active = !reward.active;
+      changed = clone(reward);
       addLog(encounter, "reward", `${reward.active ? "Activated" : "Deactivated"} reward: ${reward.label}.`);
     });
+    if (changed?.active && changed.playerVisible) await ChatMessage.create({ content: `<div class="dnd5e-nce-threshold gained"><h3>Reward Revealed: ${esc(changed.label)}</h3>${rewardDetail(changed) ? `<p>${esc(rewardDetail(changed))}</p>` : ""}</div>` });
+    if (changed && !changed.active) await ChatMessage.create({ content: `<div class="dnd5e-nce-threshold lost"><h3>Reward Hidden: ${esc(changed.label)}</h3></div>` });
   }
   static async applyReward(_event, target) {
     await mutateActive("Applied point reward", async (encounter) => {
