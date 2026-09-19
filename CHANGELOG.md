@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.6 — 2026-09-19
+
+- Fixed manual Chase Success adjustments updating the Global Progress Clock but leaving the encounter panel’s total stale.
+- Added No Crits, Easy Crits (+5 / no critical failure), Average Crits (+5 / −10), and Hard Crits (+5 / −5) settings.
+- Preserved existing ±5 critical-result encounters by migrating them to Hard Crits.
+
 ## 0.1.5 — 2026-09-19
 
 - Fixed Open-Ended Chase critical successes awarding only one Chase Success; they now correctly award two.

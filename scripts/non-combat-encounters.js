@@ -1,7 +1,7 @@
 const MODULE_ID = "dnd5e-non-combat-encounters";
 const SETTINGS = { encounters: "encounters", active: "activeEncounter" };
 const SOCKET = `module.${MODULE_ID}`;
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 const MAX_HISTORY = 30;
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -112,7 +112,8 @@ function normalize(encounter) {
   encounter.log = indexedArray(encounter.log);
   encounter.history = indexedArray(encounter.history);
   encounter.dcVisibility = ["hidden", "relative", "exact"].includes(encounter.dcVisibility) ? encounter.dcVisibility : "hidden";
-  encounter.criticalMode = ["none", "margin5"].includes(encounter.criticalMode) ? encounter.criticalMode : "none";
+  if (encounter.criticalMode === "margin5") encounter.criticalMode = "hard";
+  encounter.criticalMode = ["none", "easy", "average", "hard"].includes(encounter.criticalMode) ? encounter.criticalMode : "none";
   encounter.participantNicknames = encounter.participantNicknames && typeof encounter.participantNicknames === "object" ? encounter.participantNicknames : {};
   encounter.showProgressClocks = !!encounter.showProgressClocks;
   encounter.globalProgressClocks = !!encounter.globalProgressClocks;
@@ -448,10 +449,21 @@ function signed(value) {
 }
 
 function degreeFor(total, dc, criticalMode) {
-  if (criticalMode === "margin5" && total >= dc + 5) return { key: "criticalSuccess", label: "Critical Success" };
+  if (["easy", "average", "hard"].includes(criticalMode) && total >= dc + 5) return { key: "criticalSuccess", label: "Critical Success" };
   if (total >= dc) return { key: "success", label: "Success" };
-  if (criticalMode === "margin5" && total <= dc - 5) return { key: "criticalFailure", label: "Critical Failure" };
+  const criticalFailureMargin = criticalMode === "hard" ? 5 : criticalMode === "average" ? 10 : Infinity;
+  if (total <= dc - criticalFailureMargin) return { key: "criticalFailure", label: "Critical Failure" };
   return { key: "failure", label: "Failure" };
+}
+
+function criticalModeHint(criticalMode) {
+  const hints = {
+    none: "Critical successes and failures are not used.",
+    easy: "A result 5 or more above the DC is a critical success. Critical failures are not used.",
+    average: "A result 5 or more above the DC is a critical success; a result 10 or more below is a critical failure.",
+    hard: "A result 5 or more above or below the DC is a critical success or critical failure."
+  };
+  return hints[criticalMode] ?? hints.none;
 }
 
 function displayName(record) {
@@ -896,7 +908,7 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
       ...context, encounter: editableEncounter, actors, isSocial: this.encounter.type === "social", isResearch: this.encounter.type === "research", isChase: this.encounter.type === "chase", isConsequenceChase: consequenceMode, isOpenEndedChase: openEndedMode, isSuccessCountChase: successCountMode, isPostCombatChase: postCombatMode, isNonPostCombatChase: this.encounter.type === "chase" && !postCombatMode, isQuickParse: ["chase", "skill"].includes(this.encounter.type) && !openEndedMode, isPointEncounter: ["social", "research", "skill", "chase"].includes(this.encounter.type), typeLabels: TYPE_LABELS,
       checkChoices: Object.fromEntries(checkChoices()), checkChoicesWithAll: Object.fromEntries([["", "All checks"], ...checkChoices()]),
       targetChoices: Object.fromEntries([["", "This target"], ...this.encounter.targets.map((target) => [target.id, displayName(target)])]),
-      dcVisibilities: { hidden: "Hidden", relative: "Relative difficulty", exact: "Exact DCs" }, criticalModes: { none: "No automatic critical results", margin5: "Critical success/failure at DC ±5" },
+      dcVisibilities: { hidden: "Hidden", relative: "Relative difficulty", exact: "Exact DCs" }, criticalModes: { none: "No Crits", easy: "Easy Crits (+5 / no critical failure)", average: "Average Crits (+5 / −10)", hard: "Hard Crits (+5 / −5)" },
       modifierKinds: { weakness: "Weakness", resistance: "Resistance", circumstance: "Circumstance" }, modifierEffects: { bonus: "Roll bonus/penalty", dc: "DC adjustment", advantage: "Advantage", disadvantage: "Disadvantage" },
       rewardKinds: { narrative: "Narrative reward", item: "Item reward", currency: "Currency reward", modifier: "Mechanical modifier", points: "Points against a target" }, rewardActivations: { automatic: "Automatic", manual: "GM activates" }, currencies: { cp: "Copper (cp)", sp: "Silver (sp)", ep: "Electrum (ep)", gp: "Gold (gp)", pp: "Platinum (pp)" }, dropLabel: dropLabels[this.encounter.type], addTargetLabel: addTargetLabels[this.encounter.type], removeTargetLabel: removeTargetLabels[this.encounter.type], elementHeading: headings[this.encounter.type], researchPointModes: { shared: "Shared source progress", individual: "Track each character's RP" }, chaseResolutions: { obstacle: "Obstacle Chase — clear each obstacle with Chase Points", consequence: "Consequence Chase — everyone checks once per phase" }, chaseTurnOrders: { before: "Quarry acts before the party", after: "Quarry acts after the party" }, exhaustionModes: { "2024": "2024 Exhaustion (−2 per level to d20 Tests)", legacy: "Optional legacy Exhaustion" }, dcReference: [{ label: "Very Easy", dc: 5 }, { label: "Easy", dc: 10 }, { label: "Medium", dc: 15 }, { label: "Hard", dc: 20 }, { label: "Very Hard", dc: 25 }, { label: "Nearly Impossible", dc: 30 }], chasePartySize: chasePartySize(this.encounter)
     };
@@ -1168,7 +1180,7 @@ class RollConfirmation extends HandlebarsApplicationMixin(ApplicationV2) {
 }
 
 async function confirmRoll(data) {
-  const dialog = new RollConfirmation(data);
+  const dialog = new RollConfirmation({ ...data, criticalHint: criticalModeHint(data.criticalMode) });
   dialog.render({ force: true });
   return dialog.promise;
 }
@@ -1306,22 +1318,28 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     if (isSuccessCountChase(Store.get())) {
       const successes = Store.get().chase.successes;
       const header = this.element.querySelector(":scope > header");
-      if (header && !header.querySelector(".nce-global-success-total")) {
-        const total = document.createElement("p");
-        total.className = "nce-global-success-total";
+      if (header) {
+        let total = header.querySelector(".nce-global-success-total");
+        if (!total) {
+          total = document.createElement("p");
+          total.className = "nce-global-success-total";
+          header.append(total);
+        }
         total.textContent = `${successes} Chase Success${successes === 1 ? "" : "es"}`;
-        header.append(total);
       }
       if (!trackerContent) return;
       trackerContent.style.setProperty("min-height", "0");
       trackerContent.style.setProperty("overflow-y", "auto", "important");
       const status = this.element.querySelector(".nce-chase-status");
-      if (status && !status.querySelector(".nce-success-count-summary")) {
-        const summary = document.createElement("p");
-        summary.className = "nce-success-count-summary";
+      if (status) {
+        let summary = status.querySelector(".nce-success-count-summary");
+        if (!summary) {
+          summary = document.createElement("p");
+          summary.className = "nce-success-count-summary";
+          status.querySelector("h3")?.after(summary);
+        }
         summary.textContent = `${successes} Chase Success${successes === 1 ? "" : "es"} — each eligible participant makes one check this phase.`;
-        status.querySelector("h3")?.after(summary);
-        if (game.user.isGM) {
+        if (!status.querySelector(".nce-chase-success-controls") && game.user.isGM) {
           const controls = document.createElement("div");
           controls.className = "nce-inline-actions nce-chase-success-controls";
           controls.innerHTML = '<button type="button" data-action="adjustChaseSuccesses" data-delta="-1"><i class="fa-solid fa-minus"></i> 1 Success</button><button type="button" data-action="adjustChaseSuccesses" data-delta="1"><i class="fa-solid fa-plus"></i> 1 Success</button>';
