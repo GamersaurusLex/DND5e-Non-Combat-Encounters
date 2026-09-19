@@ -1,7 +1,7 @@
 const MODULE_ID = "dnd5e-non-combat-encounters";
 const SETTINGS = { encounters: "encounters", active: "activeEncounter" };
 const SOCKET = `module.${MODULE_ID}`;
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 const MAX_HISTORY = 30;
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -36,6 +36,15 @@ function checkChoices() {
     choices.push([`tool:${key}`, label]);
   }
   return choices;
+}
+
+function checkChoicesForActor(actor) {
+  const standard = CHECK_CHOICES.filter(([key]) => !key.startsWith("tool:"));
+  const tools = Object.entries(actor?.system?.tools ?? {}).filter(([, tool]) => Number(tool?.proficient ?? tool?.value ?? 0) > 0).map(([key]) => {
+    const label = dnd5e.documents.Trait.keyLabel(key, { trait: "tool" }) ?? CONFIG.DND5E.tools?.[key]?.label ?? key;
+    return [`tool:${key}`, label];
+  });
+  return [...standard, ...tools];
 }
 
 function checkLabel(key) {
@@ -83,7 +92,7 @@ function newEncounter() {
     currentRound: 1, roundLimit: 0, targets: [newTarget("social")], activeActorId: "", activeTargetId: "",
     actorsActed: {}, pendingRequests: [], log: [], history: [], dcVisibility: "hidden", criticalMode: "none", participantNicknames: {}, showProgressClocks: false, autoAdvance: true,
     research: { intervalHours: 4, pointMode: "shared" },
-    chase: { resolution: "obstacle", quarryName: "The Quarry", quarryImage: "icons/svg/mystery-man.svg", quarryUuid: "", quarryPosition: 1, startPosition: 1, pace: 1, turnOrder: "before", scriptedQuarry: false, exhaustionMode: "2024", exhaustionByActor: {}, basePartySize: 4, partySize: 0, successes: 0, consequenceOutcomes: [newConsequenceOutcome(0, "Setback", "The chase ends with serious consequences."), newConsequenceOutcome(4, "Mixed Outcome", "The party succeeds, but at a cost."), newConsequenceOutcome(8, "Strong Outcome", "The party achieves an excellent result.")], concluded: false, outcome: "", victoryText: "You caught the quarry!", escapeText: "The quarry escaped.", conclusionText: "The chase concludes." },
+    chase: { resolution: "obstacle", openEnded: false, quarryName: "The Quarry", quarryImage: "icons/svg/mystery-man.svg", quarryUuid: "", quarryPosition: 1, startPosition: 1, pace: 1, turnOrder: "before", scriptedQuarry: false, exhaustionMode: "2024", exhaustionByActor: {}, basePartySize: 4, partySize: 0, successes: 0, consequenceOutcomes: [newConsequenceOutcome(0, "Setback", "The chase ends with serious consequences."), newConsequenceOutcome(4, "Mixed Outcome", "The party succeeds, but at a cost."), newConsequenceOutcome(8, "Strong Outcome", "The party achieves an excellent result.")], concluded: false, outcome: "", victoryText: "You caught the quarry!", escapeText: "The quarry escaped.", conclusionText: "The chase concludes." },
     createdAt: Date.now(), updatedAt: Date.now()
   };
 }
@@ -112,6 +121,7 @@ function normalize(encounter) {
   encounter.research.pointMode = encounter.research.pointMode === "individual" ? "individual" : "shared";
   encounter.chase = encounter.chase && typeof encounter.chase === "object" ? encounter.chase : {};
   encounter.chase.resolution = encounter.chase.resolution === "consequence" ? "consequence" : "obstacle";
+  encounter.chase.openEnded = truthy(encounter.chase.openEnded);
   encounter.chase.quarryName ||= "The Quarry"; encounter.chase.quarryImage ||= "icons/svg/mystery-man.svg"; encounter.chase.quarryUuid ??= "";
   encounter.chase.startPosition = Math.max(0, Number(encounter.chase.startPosition) || 0);
   encounter.chase.quarryPosition = Math.max(0, Number(encounter.chase.quarryPosition ?? encounter.chase.startPosition) || 0);
@@ -184,6 +194,7 @@ function participantActors(encounter) {
 function isResearch(encounter) { return encounter?.type === "research"; }
 function isChase(encounter) { return encounter?.type === "chase"; }
 function isConsequenceChase(encounter) { return isChase(encounter) && encounter?.chase?.resolution === "consequence"; }
+function isOpenEndedChase(encounter) { return isChase(encounter) && !!encounter?.chase?.openEnded; }
 
 function chasePartySize(encounter) {
   return Number(encounter?.chase?.partySize) || encounter?.participantIds?.length || Number(encounter?.chase?.basePartySize) || 4;
@@ -802,13 +813,14 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     const removeTargetLabels = { social: "Remove Target", research: "Remove Source", chase: "Remove Obstacle", exploration: "Remove Location", skill: "Remove Challenge" };
     const editableEncounter = clone(this.encounter);
     const consequenceMode = isConsequenceChase(this.encounter);
+    const openEndedMode = isOpenEndedChase(this.encounter);
     if (editableEncounter.type === "chase") editableEncounter.targets.forEach((target) => { target.adjustedGoal = chaseGoal(editableEncounter, target); });
     if (editableEncounter.type === "research") editableEncounter.targets.forEach((target) => {
       target.researchRows = actors.filter((actor) => actor.selected).map((actor) => ({ id: actor.id, name: actor.name, available: target.availabilityByActor?.[actor.id] !== false, maximum: researchMaxFor(target, actor.id), earned: researchPointsFor(target, actor.id) }));
     });
     const headings = { social: "Influence Targets", research: "Research Sources", chase: "Chase Obstacles", exploration: "Exploration Locations", skill: "Skill Challenges" };
     return {
-      ...context, encounter: editableEncounter, actors, isSocial: this.encounter.type === "social", isResearch: this.encounter.type === "research", isChase: this.encounter.type === "chase", isConsequenceChase: consequenceMode, isQuickParse: ["chase", "skill"].includes(this.encounter.type), isPointEncounter: ["social", "research", "skill", "chase"].includes(this.encounter.type), typeLabels: TYPE_LABELS,
+      ...context, encounter: editableEncounter, actors, isSocial: this.encounter.type === "social", isResearch: this.encounter.type === "research", isChase: this.encounter.type === "chase", isConsequenceChase: consequenceMode, isOpenEndedChase: openEndedMode, isQuickParse: ["chase", "skill"].includes(this.encounter.type) && !openEndedMode, isPointEncounter: ["social", "research", "skill", "chase"].includes(this.encounter.type), typeLabels: TYPE_LABELS,
       checkChoices: Object.fromEntries(checkChoices()), checkChoicesWithAll: Object.fromEntries([["", "All checks"], ...checkChoices()]),
       targetChoices: Object.fromEntries([["", "This target"], ...this.encounter.targets.map((target) => [target.id, displayName(target)])]),
       dcVisibilities: { hidden: "Hidden", relative: "Relative difficulty", exact: "Exact DCs" }, criticalModes: { none: "No automatic critical results", margin5: "Critical success/failure at DC ±5" },
@@ -906,7 +918,7 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     for (const actor of game.actors.filter((entry) => entry.type === "character")) this.encounter.participantNicknames[actor.id] = this.element.querySelector(`[name="participantNicknames.${actor.id}"]`)?.value.trim() ?? "";
     this.encounter.showProgressClocks = this.element.querySelector('[name="showProgressClocks"]')?.checked ?? false;
     this.encounter.autoAdvance = isConsequenceChase(this.encounter) || (this.element.querySelector('[name="autoAdvance"]')?.checked ?? true);
-    if (this.encounter.type === "chase") this.encounter.chase.scriptedQuarry = this.element.querySelector('[name="chase.scriptedQuarry"]')?.checked ?? false;
+    if (this.encounter.type === "chase") { this.encounter.chase.scriptedQuarry = this.element.querySelector('[name="chase.scriptedQuarry"]')?.checked ?? false; this.encounter.chase.openEnded = this.element.querySelector('[name="chase.openEnded"]')?.checked ?? false; }
     this._captureTargetOptions();
     normalize(this.encounter);
   }
@@ -947,7 +959,7 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     for (const actor of game.actors.filter((entry) => entry.type === "character")) this.encounter.participantNicknames[actor.id] = this.element.querySelector(`[name="participantNicknames.${actor.id}"]`)?.value.trim() ?? "";
     this.encounter.showProgressClocks = this.element.querySelector('[name="showProgressClocks"]')?.checked ?? false;
     this.encounter.autoAdvance = isConsequenceChase(this.encounter) || (this.element.querySelector('[name="autoAdvance"]')?.checked ?? true);
-    if (this.encounter.type === "chase") this.encounter.chase.scriptedQuarry = this.element.querySelector('[name="chase.scriptedQuarry"]')?.checked ?? false;
+    if (this.encounter.type === "chase") { this.encounter.chase.scriptedQuarry = this.element.querySelector('[name="chase.scriptedQuarry"]')?.checked ?? false; this.encounter.chase.openEnded = this.element.querySelector('[name="chase.openEnded"]')?.checked ?? false; }
     this._captureTargetOptions();
     normalize(this.encounter);
     await Store.save(this.encounter); ui.notifications.info("Encounter saved."); await this.render({ force: true });
@@ -995,7 +1007,7 @@ class RollConfirmation extends HandlebarsApplicationMixin(ApplicationV2) {
   _choice(mode) {
     const form = new foundry.applications.ux.FormDataExtended(this.element).object;
     const modifierIds = [...this.element.querySelectorAll('[name="modifierIds"]:checked')].map((input) => input.value);
-    this.resolve({ mode, bonus: Number(form.bonus) || 0, dcAdjust: Number(form.dcAdjust) || 0, bonusNote: String(form.bonusNote ?? "").trim(), rollMode: form.rollMode || "publicroll", modifierIds });
+    this.resolve({ mode, bonus: Number(form.bonus) || 0, dcAdjust: Number(form.dcAdjust) || 0, bonusNote: String(form.bonusNote ?? "").trim(), rollMode: form.rollMode || "publicroll", modifierIds, checkKey: form.checkKey || "ability:str", dc: Number(form.dc) || 0 });
     this.resolve = () => {};
     this.close();
   }
@@ -1018,7 +1030,7 @@ async function confirmRoll(data) {
 async function rollRequestedCheck(request, encounter, choice) {
   const actor = game.actors.get(request.actorId);
   const target = encounter.targets.find((entry) => entry.id === request.targetId);
-  const check = target?.checks.find((entry) => entry.id === request.checkId);
+  const check = request.openEndedCheck ?? target?.checks.find((entry) => entry.id === request.checkId);
   if (!actor || !target || !check) throw new Error("The requested actor, target, or check is no longer available.");
   const { type, id } = parseCheckKey(check.key);
   const selectedModifiers = applicableModifiers(encounter, target, check).filter((modifier) => choice.modifierIds.includes(modifier.id));
@@ -1104,18 +1116,18 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     const participants = encounter ? participantActors(encounter).map((actor) => ({ id: actor.id, name: actor.name, displayName: encounter.participantNicknames[actor.id]?.trim() || actor.name, image: actor.img, owned: canControlActor(actor), acted: !!encounter.actorsActed[actor.id], selected: actor.id === viewActorId, researchTotal: encounter.targets.reduce((sum, source) => sum + researchPointsFor(source, actor.id), 0), exhaustion: chaseExhaustion(encounter, actor.id), droppedOut: isChaseDropout(encounter, actor.id) })) : [];
     if (encounter) {
       const visibleTargets = !game.user.isGM && isResearch(encounter) ? encounter.targets.filter((target) => owned.some((actor) => researchSourceAvailable(target, actor.id))) : encounter.targets;
-      encounter.targets = visibleTargets.map((target, index) => { const effectiveGoal = isConsequenceChase(encounter) ? 0 : chaseGoal(encounter, target); return { ...target, displayName: displayName(target), selected: target.id === viewTargetId, effectiveGoal, progressPct: effectiveGoal ? Math.min(100, Math.max(0, Math.round((target.points / effectiveGoal) * 100))) : 0, sourceAvailable: !isResearch(encounter) || (!!viewActorId && researchSourceAvailable(target, viewActorId)), selectedActorPoints: researchPointsFor(target, viewActorId), selectedActorMaximum: researchMaxFor(target, viewActorId), researchRows: participants.map((actor) => ({ ...actor, sourcePoints: researchPointsFor(target, actor.id), sourceMaximum: researchMaxFor(target, actor.id), available: researchSourceAvailable(target, actor.id) })), obstacleIndex: index + 1, obstacleCurrent: isChase(encounter) && index === encounter.chase.partyPosition, obstacleCompleted: isChase(encounter) && index < encounter.chase.partyPosition, obstacleQuarry: !isConsequenceChase(encounter) && isChase(encounter) && index === encounter.chase.quarryPosition, unlockedThresholds: target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => ({ ...threshold, rewards: threshold.rewards.filter((reward) => game.user.isGM || (reward.playerVisible && reward.active)).map((reward) => ({ ...reward, description: rewardDetail(reward) })) })) }; });
+      encounter.targets = visibleTargets.map((target, index) => { const effectiveGoal = isConsequenceChase(encounter) ? 0 : chaseGoal(encounter, target); return { ...target, checks: isOpenEndedChase(encounter) ? [{ id: "open-ended", key: "ability:str", label: "GM Adjudicated Check", dc: 0, guidance: "The GM selects the check and difficulty after hearing the player's approach." }] : target.checks, displayName: displayName(target), selected: target.id === viewTargetId, effectiveGoal, progressPct: effectiveGoal ? Math.min(100, Math.max(0, Math.round((target.points / effectiveGoal) * 100))) : 0, sourceAvailable: !isResearch(encounter) || (!!viewActorId && researchSourceAvailable(target, viewActorId)), selectedActorPoints: researchPointsFor(target, viewActorId), selectedActorMaximum: researchMaxFor(target, viewActorId), researchRows: participants.map((actor) => ({ ...actor, sourcePoints: researchPointsFor(target, actor.id), sourceMaximum: researchMaxFor(target, actor.id), available: researchSourceAvailable(target, actor.id) })), obstacleIndex: index + 1, obstacleCurrent: isChase(encounter) && index === encounter.chase.partyPosition, obstacleCompleted: isChase(encounter) && index < encounter.chase.partyPosition, obstacleQuarry: !isConsequenceChase(encounter) && isChase(encounter) && index === encounter.chase.quarryPosition, unlockedThresholds: target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => ({ ...threshold, rewards: threshold.rewards.filter((reward) => game.user.isGM || (reward.playerVisible && reward.active)).map((reward) => ({ ...reward, description: rewardDetail(reward) })) })) }; });
     }
     const selectedTarget = encounter?.targets.find((target) => target.id === viewTargetId);
     const selectedActor = participants.find((actor) => actor.id === viewActorId);
     if (selectedTarget && selectedActor) selectedTarget.checks = selectedTarget.checks.map((check) => ({ ...check, actorModifier: signed(actorCheckModifier(game.actors.get(selectedActor.id), check.key)) }));
     const pendingRequests = game.user.isGM ? encounter?.pendingRequests.filter((request) => request.status === "pending").map((request) => {
       const requestTarget = encounter.targets.find((entry) => entry.id === request.targetId);
-      const requestCheck = requestTarget?.checks.find((entry) => entry.id === request.checkId);
+      const requestCheck = request.openEndedCheck ?? requestTarget?.checks.find((entry) => entry.id === request.checkId);
       return { ...request, modifier: signed(actorCheckModifier(game.actors.get(request.actorId), requestCheck?.key)) };
     }) ?? [] : [];
     const canChase = !isChase(encounter) || (!encounter.chase.concluded && !!selectedTarget?.obstacleCurrent && !!selectedActor && !selectedActor.droppedOut);
-    return { ...context, encounter, participants, selectedTarget, selectedActor, pendingRequests, typeLabel: encounter ? TYPE_LABELS[encounter.type] : "", noEncounter: !encounter, isGM: game.user.isGM, isResearch: isResearch(encounter), isChase: isChase(encounter), isConsequenceChase: isConsequenceChase(encounter), consequenceOutcome: consequenceOutcome(encounter), canRequest: encounter?.status === "active" && !!selectedActor && !selectedActor.acted && (!isResearch(encounter) || !!selectedTarget?.sourceAvailable) && canChase, showDC: game.user.isGM || encounter?.dcVisibility === "exact", hasUndo: game.user.isGM && !!encounter?.history.length, chaseQuarryPosition: isChase(encounter) ? encounter.chase.quarryPosition + 1 : 0, chasePhaseCount: encounter?.targets?.length ?? 0 };
+    return { ...context, encounter, participants, selectedTarget, selectedActor, pendingRequests, typeLabel: encounter ? TYPE_LABELS[encounter.type] : "", noEncounter: !encounter, isGM: game.user.isGM, isResearch: isResearch(encounter), isChase: isChase(encounter), isConsequenceChase: isConsequenceChase(encounter), isOpenEndedChase: isOpenEndedChase(encounter), consequenceOutcome: consequenceOutcome(encounter), canRequest: encounter?.status === "active" && !!selectedActor && !selectedActor.acted && (!isResearch(encounter) || !!selectedTarget?.sourceAvailable) && canChase && (!isOpenEndedChase(encounter) || game.user.isGM), showDC: (game.user.isGM || encounter?.dcVisibility === "exact") && !isOpenEndedChase(encounter), hasUndo: game.user.isGM && !!encounter?.history.length, chaseQuarryPosition: isChase(encounter) ? encounter.chase.quarryPosition + 1 : 0, chasePhaseCount: encounter?.targets?.length ?? 0 };
   }
   static manage() { const encounter = Store.get(); if (encounter) new EncounterEditor(encounter).render({ force: true }); else manager.render({ force: true }); }
   static selectActor(_event, target) { viewActorId = target.dataset.id; this.render({ force: true }); }
@@ -1130,10 +1142,22 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     const selectedTarget = encounter?.targets.find((entry) => entry.id === viewTargetId);
     const check = selectedTarget?.checks.find((entry) => entry.id === target.dataset.checkId);
     if (!encounter || !actor || !check || !canControlActor(actor) || encounter.actorsActed[actor.id] || (isResearch(encounter) && !researchSourceAvailable(selectedTarget, actor.id))) return ui.notifications.warn("Choose an eligible character and available source.");
+    if (isOpenEndedChase(encounter)) return this.openEndedCheck(encounter, actor, selectedTarget);
     const request = { action: "request", encounterId: encounter.id, userId: game.user.id, actorId: actor.id, targetId: selectedTarget.id, checkId: check.id };
     if (game.user.isGM) handlePlayerRequest(request);
     else game.socket.emit(SOCKET, request);
     ui.notifications.info(`Requested ${check.label} for ${actor.name}.`);
+  }
+  static async openEndedCheck(encounter, actor, selectedTarget) {
+    if (!game.user.isGM || !isOpenEndedChase(encounter) || !selectedTarget) return;
+    const request = { id: randomID(), status: "pending", createdAt: Date.now(), userId: game.user.id, actorId: actor.id, actorName: actor.name, targetId: selectedTarget.id, targetName: selectedTarget.name, checkId: "open-ended", checkLabel: "GM Adjudicated Check", openEnded: true };
+    await mutateActive("Opened an open-ended chase check", async (current) => {
+      current.pendingRequests.push(request);
+      current.activeActorId = actor.id;
+      current.activeTargetId = selectedTarget.id;
+      addLog(current, "request", `${actor.name} is attempting an open-ended check against ${selectedTarget.name}.`, request);
+    });
+    await this.completeRequest(null, { dataset: { id: request.id } });
   }
   static async adjustPoints(_event, target) {
     const targetId = target.dataset.id;
@@ -1221,12 +1245,18 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     const request = encounter?.pendingRequests.find((entry) => entry.id === target.dataset.id && entry.status === "pending");
     if (!request) return ui.notifications.warn("That request is no longer pending.");
     const requestTarget = encounter.targets.find((entry) => entry.id === request.targetId);
-    const requestCheck = requestTarget?.checks.find((entry) => entry.id === request.checkId);
+    const requestCheck = request.openEndedCheck ?? requestTarget?.checks.find((entry) => entry.id === request.checkId) ?? (request.openEnded ? { id: "open-ended", key: "ability:str", label: "GM Adjudicated Check", dc: 0, successPoints: 1, criticalSuccessPoints: 2, failurePoints: 0, criticalFailurePoints: -1 } : null);
     const actor = game.actors.get(request.actorId);
     const modifiers = requestTarget && requestCheck ? applicableModifiers(encounter, requestTarget, requestCheck).map((modifier) => ({ ...modifier, checked: modifier.active && !modifier.conditional, signedValue: ["advantage", "disadvantage"].includes(modifier.effect) ? "" : signed(modifier.value) })) : [];
     const exhaustion = chaseExhaustionEffect(encounter, actor, requestCheck);
-    const choice = await confirmRoll({ request, dc: requestCheck?.dc ?? 0, modifier: signed(actorCheckModifier(actor, requestCheck?.key)), criticalMode: encounter.criticalMode, modifiers, exhaustion });
+    const choice = await confirmRoll({ request, dc: requestCheck?.dc ?? 0, modifier: signed(actorCheckModifier(actor, requestCheck?.key)), criticalMode: encounter.criticalMode, modifiers, exhaustion, openEnded: !!request.openEnded, checkChoices: Object.fromEntries(checkChoicesForActor(actor)) });
     if (!choice) return;
+    if (request.openEnded) {
+      const checkKey = checkChoicesForActor(actor).some(([key]) => key === choice.checkKey) ? choice.checkKey : "ability:str";
+      request.openEndedCheck = { id: "open-ended", key: checkKey, label: checkLabel(checkKey), dc: Math.max(0, Number(choice.dc) || 0), successPoints: 1, criticalSuccessPoints: 2, failurePoints: 0, criticalFailurePoints: -1 };
+      request.checkId = request.openEndedCheck.id;
+      request.checkLabel = request.openEndedCheck.label;
+    }
     let result;
     try { result = await rollRequestedCheck(request, encounter, choice); }
     catch (error) { console.error(`${MODULE_ID} | Roll failed`, error); return ui.notifications.error(`The check could not be rolled: ${error.message}`); }
@@ -1239,6 +1269,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
       const currentRequest = current.pendingRequests.find((entry) => entry.id === request.id);
       if (!currentRequest || currentRequest.status !== "pending") return;
       currentRequest.status = "completed";
+      if (request.openEndedCheck) { currentRequest.openEndedCheck = request.openEndedCheck; currentRequest.checkLabel = request.openEndedCheck.label; currentRequest.checkId = request.openEndedCheck.id; }
       currentRequest.completedAt = Date.now();
       currentRequest.rollTotal = result.total;
       currentRequest.outcome = result.degree.key;

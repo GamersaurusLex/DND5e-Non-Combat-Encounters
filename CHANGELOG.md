@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.3 — 2026-09-18
+
+- Added Open-Ended Chase support for both normal and Consequence Chases. The GM chooses the acting participant, then selects the check, DC, modifiers, and roll after hearing the player’s approach.
+- Open-Ended Chases hide per-obstacle skill and DC setup and prevent players from submitting roll requests.
+- The GM’s tool selector now lists only tools the selected character is proficient with; physical inventory possession remains intentionally optional.
+
 ## 0.1.2 — 2026-09-18
 
 - Added Consequence Chase resolution: each eligible participant makes one check per phase, Chase Successes accumulate across the encounter, and configurable outcome tiers resolve the final consequence.

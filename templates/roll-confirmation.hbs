@@ -1,5 +1,6 @@
 <div class="nce-roll-confirmation standard-form">
   <header><h2>{{request.actorName}} → {{request.targetName}}</h2><p><strong>{{request.checkLabel}} {{modifier}}</strong> against DC {{dc}}</p></header>
+  {{#if openEnded}}<fieldset class="nce-open-ended-check"><legend>GM Adjudication</legend><div class="nce-config-grid"><label>Check<select name="checkKey">{{selectOptions checkChoices selected="ability:str"}}</select></label><label>DC<input type="number" min="0" name="dc" value="15"></label></div><p class="hint">Choose the check and DC after hearing the player's approach. Only the selected character's proficient tools are listed.</p></fieldset>{{/if}}
   <div class="form-group"><label>Situational Modifier</label><div class="form-fields"><input type="number" name="bonus" value="0"></div></div>
   <div class="form-group"><label>DC Adjustment</label><div class="form-fields"><input type="number" name="dcAdjust" value="0"></div></div>
   <div class="form-group"><label>Reason</label><div class="form-fields"><input type="text" name="bonusNote" placeholder="Optional note"></div></div>

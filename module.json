@@ -2,11 +2,11 @@
   "id": "dnd5e-non-combat-encounters",
   "title": "Non-Combat Encounters for D&D 5e",
   "description": "Build and run structured social, research, chase, exploration, and skill-based encounters for D&D 5e.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "authors": [{ "name": "Gamersaurus Lex" }],
   "url": "https://github.com/GamersaurusLex/DND5e-Non-Combat-Encounters",
   "manifest": "https://github.com/GamersaurusLex/DND5e-Non-Combat-Encounters/releases/latest/download/module.json",
-  "download": "https://github.com/GamersaurusLex/DND5e-Non-Combat-Encounters/releases/download/v0.1.2/dnd5e-non-combat-encounters.zip",
+  "download": "https://github.com/GamersaurusLex/DND5e-Non-Combat-Encounters/releases/download/v0.1.3/dnd5e-non-combat-encounters.zip",
   "socket": true,
   "compatibility": { "minimum": "14.365", "verified": "14.367", "maximum": "14" },
   "relationships": {
