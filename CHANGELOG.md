@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.8 — 2026-09-19
+
+- Grouped Open-Ended Chase checks by proficiency, placing the acting PC’s proficient skills, saves, and tools first.
+- Added a visible ★ proficiency marker that works reliably in macOS native dropdowns.
+
 ## 0.1.7 — 2026-09-19
 
 - Fixed skill and tool checks rolling as a bare d20. They now use the selected character’s governing ability, proficiency, active modifiers, and D&D 5e proficiency-die variant rules.

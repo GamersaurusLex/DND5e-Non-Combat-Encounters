@@ -47,6 +47,35 @@ function checkChoicesForActor(actor) {
   return [...standard, ...tools];
 }
 
+function actorIsProficientInCheck(actor, key) {
+  const { type, id } = parseCheckKey(key);
+  if (type === "skill") {
+    const skill = actor?.system?.skills?.[id];
+    return !!skill?.prof?.hasProficiency || Number(skill?.effectValue ?? skill?.prof?.multiplier ?? skill?.proficient ?? skill?.value ?? 0) > 0;
+  }
+  if (type === "save") {
+    const save = actor?.system?.abilities?.[id]?.save;
+    return !!save?.prof?.hasProficiency || Number(save?.prof?.multiplier ?? save?.proficient ?? save?.prof?.value ?? save?.value ?? 0) > 0;
+  }
+  if (type === "tool") {
+    const tool = actor?.system?.tools?.[id];
+    return !!tool?.prof?.hasProficiency || Number(tool?.effectValue ?? tool?.prof?.multiplier ?? tool?.proficient ?? tool?.value ?? 0) > 0;
+  }
+  return false;
+}
+
+function checkChoiceOptionsForActor(actor) {
+  return checkChoicesForActor(actor).map(([value, label]) => {
+    const proficient = actorIsProficientInCheck(actor, value);
+    return { value, label: proficient ? `★ ${label}` : label, proficient };
+  });
+}
+
+function checkChoiceGroupsForActor(actor) {
+  const choices = checkChoiceOptionsForActor(actor);
+  return { proficient: choices.filter((choice) => choice.proficient), other: choices.filter((choice) => !choice.proficient) };
+}
+
 function checkLabel(key) {
   return checkChoices().find(([value]) => value === key)?.[1] ?? checkLabelForKey(key);
 }
@@ -1517,7 +1546,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     const actor = game.actors.get(request.actorId);
     const modifiers = requestTarget && requestCheck ? applicableModifiers(encounter, requestTarget, requestCheck).map((modifier) => ({ ...modifier, checked: modifier.active && !modifier.conditional, signedValue: ["advantage", "disadvantage"].includes(modifier.effect) ? "" : signed(modifier.value) })) : [];
     const exhaustion = chaseExhaustionEffect(encounter, actor, requestCheck);
-    const choice = await confirmRoll({ request, dc: requestCheck?.dc ?? 0, modifier: signed(actorCheckModifier(actor, requestCheck?.key)), criticalMode: encounter.criticalMode, modifiers, exhaustion, openEnded: !!request.openEnded, checkChoices: Object.fromEntries(checkChoicesForActor(actor)) });
+    const choice = await confirmRoll({ request, dc: requestCheck?.dc ?? 0, modifier: signed(actorCheckModifier(actor, requestCheck?.key)), criticalMode: encounter.criticalMode, modifiers, exhaustion, openEnded: !!request.openEnded, checkChoiceGroups: checkChoiceGroupsForActor(actor) });
     if (!choice) return;
     if (request.openEnded) {
       const checkKey = checkChoicesForActor(actor).some(([key]) => key === choice.checkKey) ? choice.checkKey : "ability:str";
