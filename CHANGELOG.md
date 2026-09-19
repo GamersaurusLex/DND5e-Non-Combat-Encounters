@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.7 — 2026-09-19
+
+- Fixed skill and tool checks rolling as a bare d20. They now use the selected character’s governing ability, proficiency, active modifiers, and D&D 5e proficiency-die variant rules.
+
 ## 0.1.6 — 2026-09-19
 
 - Fixed manual Chase Success adjustments updating the Global Progress Clock but leaving the encounter panel’s total stale.

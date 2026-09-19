@@ -1201,7 +1201,11 @@ async function rollRequestedCheck(request, encounter, choice) {
   const advantageMode = mode === "advantage" ? advantageModes.ADVANTAGE : mode === "disadvantage" ? advantageModes.DISADVANTAGE : advantageModes.NORMAL;
   const bonus = (Number(choice.bonus) || 0) + exhaustion.bonus + selectedModifiers.filter((modifier) => modifier.effect === "bonus").reduce((sum, modifier) => sum + Number(modifier.value), 0);
   const effectiveDc = Math.max(0, check.dc + (Number(choice.dcAdjust) || 0) + selectedModifiers.filter((modifier) => modifier.effect === "dc").reduce((sum, modifier) => sum + Number(modifier.value), 0));
-  const config = { ability: id, target: effectiveDc, advantageMode };
+  // Skills and tools must not receive their identifier as an ability. Leaving
+  // ability unset lets D&D 5e read the actor's configured ability, proficiency,
+  // and any proficiency-die variant rules from the character sheet.
+  const config = { target: effectiveDc, advantageMode };
+  if (["ability", "save"].includes(type)) config.ability = id;
   if (["skill", "tool"].includes(type)) config.bonus = String(bonus);
   else if (bonus) config.rolls = [{ parts: ["@nceBonus"], data: { nceBonus: bonus }, options: {} }];
   const dialog = { configure: false };
