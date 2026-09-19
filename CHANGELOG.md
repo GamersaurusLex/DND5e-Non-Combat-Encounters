@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.4 — 2026-09-19
+
+- Reworked the D&D editor, manager, and active tracker to match the proven PF2e encounter workflow, including tabs, compact manager rows, and native-style context menus.
+- Completed Open-Ended Chase success-count behavior: no Chase Point thresholds, automatic obstacle advancement after every participant acts, and GM controls for manual Success adjustments.
+- Added Global Progress Clocks integration for every encounter type. It is opt-in per encounter, creates one shared clock for global-success encounters or one clock per tracked entry, persists while active or paused, and removes its clocks when the encounter ends or is deleted.
+- Preserved the existing in-panel circular progress display as a separate visual preference for Social and Research encounters.
+- Limited exhaustion configuration and effects to Post-Combat Chases, and improved chase roll-request validation and state handling.
+
 ## 0.1.3 — 2026-09-18
 
 - Added Open-Ended Chase support for both normal and Consequence Chases. The GM chooses the acting participant, then selects the check, DC, modifiers, and roll after hearing the player’s approach.

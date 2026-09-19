@@ -1,7 +1,7 @@
 const MODULE_ID = "dnd5e-non-combat-encounters";
 const SETTINGS = { encounters: "encounters", active: "activeEncounter" };
 const SOCKET = `module.${MODULE_ID}`;
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 const MAX_HISTORY = 30;
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -77,7 +77,7 @@ function newThreshold(targetId = "") {
 function newTarget(type = "social") {
   const names = { social: "New NPC", research: "New Source", chase: "New Obstacle", exploration: "New Location", skill: "New Challenge" };
   const id = randomID();
-  return { id, sourceUuid: "", sourceType: "", name: names[type], nickname: "", image: "icons/svg/mystery-man.svg", description: "", background: "", appearance: "", personality: "", gmNotes: "", playerNotes: "", points: 0, goal: type === "chase" ? 3 : 4, checks: [newCheck()], modifiers: [], thresholds: [newThreshold(id)], hidden: false, exhausted: false, availabilityByActor: {}, maxPointsByActor: {}, researchPointsByActor: {}, failureExhaustion: type === "chase" ? 1 : 0, criticalFailureExhaustion: type === "chase" ? 1 : 0 };
+  return { id, sourceUuid: "", sourceType: "", name: names[type], nickname: "", image: "icons/svg/mystery-man.svg", description: "", background: "", appearance: "", personality: "", gmNotes: "", playerNotes: "", points: 0, goal: type === "chase" ? 3 : 4, checks: [newCheck()], modifiers: [], thresholds: [newThreshold(id)], hidden: false, exhausted: false, availabilityByActor: {}, maxPointsByActor: {}, researchPointsByActor: {}, failureExhaustion: 0, criticalFailureExhaustion: 0 };
 }
 
 function newConsequenceOutcome(minimum = 0, label = "Consequence", text = "") {
@@ -90,9 +90,9 @@ function newEncounter() {
     id, name: "New Non-Combat Encounter", type: "social", status: "draft",
     schemaVersion: SCHEMA_VERSION, image: "icons/svg/d20-black.svg", backgroundImage: "", description: "", participantIds: [],
     currentRound: 1, roundLimit: 0, targets: [newTarget("social")], activeActorId: "", activeTargetId: "",
-    actorsActed: {}, pendingRequests: [], log: [], history: [], dcVisibility: "hidden", criticalMode: "none", participantNicknames: {}, showProgressClocks: false, autoAdvance: true,
+    actorsActed: {}, pendingRequests: [], log: [], history: [], dcVisibility: "hidden", criticalMode: "none", participantNicknames: {}, showProgressClocks: false, globalProgressClocks: false, autoAdvance: true,
     research: { intervalHours: 4, pointMode: "shared" },
-    chase: { resolution: "obstacle", openEnded: false, quarryName: "The Quarry", quarryImage: "icons/svg/mystery-man.svg", quarryUuid: "", quarryPosition: 1, startPosition: 1, pace: 1, turnOrder: "before", scriptedQuarry: false, exhaustionMode: "2024", exhaustionByActor: {}, basePartySize: 4, partySize: 0, successes: 0, consequenceOutcomes: [newConsequenceOutcome(0, "Setback", "The chase ends with serious consequences."), newConsequenceOutcome(4, "Mixed Outcome", "The party succeeds, but at a cost."), newConsequenceOutcome(8, "Strong Outcome", "The party achieves an excellent result.")], concluded: false, outcome: "", victoryText: "You caught the quarry!", escapeText: "The quarry escaped.", conclusionText: "The chase concludes." },
+    chase: { resolution: "obstacle", openEnded: false, postCombat: false, quarryName: "The Quarry", quarryImage: "icons/svg/mystery-man.svg", quarryUuid: "", quarryPosition: 1, startPosition: 1, pace: 1, turnOrder: "before", scriptedQuarry: false, exhaustionMode: "2024", exhaustionByActor: {}, basePartySize: 4, partySize: 0, successes: 0, consequenceOutcomes: [newConsequenceOutcome(0, "Setback", "The chase ends with serious consequences."), newConsequenceOutcome(4, "Mixed Outcome", "The party succeeds, but at a cost."), newConsequenceOutcome(8, "Strong Outcome", "The party achieves an excellent result.")], concluded: false, outcome: "", victoryText: "You caught the quarry!", escapeText: "The quarry escaped.", conclusionText: "The chase concludes." },
     createdAt: Date.now(), updatedAt: Date.now()
   };
 }
@@ -115,6 +115,7 @@ function normalize(encounter) {
   encounter.criticalMode = ["none", "margin5"].includes(encounter.criticalMode) ? encounter.criticalMode : "none";
   encounter.participantNicknames = encounter.participantNicknames && typeof encounter.participantNicknames === "object" ? encounter.participantNicknames : {};
   encounter.showProgressClocks = !!encounter.showProgressClocks;
+  encounter.globalProgressClocks = !!encounter.globalProgressClocks;
   encounter.autoAdvance = encounter.autoAdvance !== false && encounter.autoAdvance !== "false";
   encounter.research = encounter.research && typeof encounter.research === "object" ? encounter.research : {};
   encounter.research.intervalHours = Math.max(1, Number(encounter.research.intervalHours) || 4);
@@ -122,6 +123,7 @@ function normalize(encounter) {
   encounter.chase = encounter.chase && typeof encounter.chase === "object" ? encounter.chase : {};
   encounter.chase.resolution = encounter.chase.resolution === "consequence" ? "consequence" : "obstacle";
   encounter.chase.openEnded = truthy(encounter.chase.openEnded);
+  encounter.chase.postCombat = truthy(encounter.chase.postCombat);
   encounter.chase.quarryName ||= "The Quarry"; encounter.chase.quarryImage ||= "icons/svg/mystery-man.svg"; encounter.chase.quarryUuid ??= "";
   encounter.chase.startPosition = Math.max(0, Number(encounter.chase.startPosition) || 0);
   encounter.chase.quarryPosition = Math.max(0, Number(encounter.chase.quarryPosition ?? encounter.chase.startPosition) || 0);
@@ -195,6 +197,42 @@ function isResearch(encounter) { return encounter?.type === "research"; }
 function isChase(encounter) { return encounter?.type === "chase"; }
 function isConsequenceChase(encounter) { return isChase(encounter) && encounter?.chase?.resolution === "consequence"; }
 function isOpenEndedChase(encounter) { return isChase(encounter) && !!encounter?.chase?.openEnded; }
+function isSuccessCountChase(encounter) { return isConsequenceChase(encounter) || isOpenEndedChase(encounter); }
+function isPostCombatChase(encounter) { return isChase(encounter) && !!encounter?.chase?.postCombat; }
+
+function globalProgressClocks() {
+  return game.modules.get("global-progress-clocks")?.active ? globalThis.clockDatabase : null;
+}
+
+function progressClockPrefix(encounter) { return `${MODULE_ID}-clock-${encounter.id}-`; }
+function progressClockId(encounter, targetId = "global") { return `${progressClockPrefix(encounter)}${targetId}`; }
+
+function progressClockEntries(encounter) {
+  if (isSuccessCountChase(encounter)) {
+    return [{ id: progressClockId(encounter), name: encounter.name, value: Number(encounter.chase?.successes) || 0, max: 99, private: false }];
+  }
+  return encounter.targets.map((target) => ({
+    id: progressClockId(encounter, target.id), name: displayName(target), value: Number(target.points) || 0,
+    max: Math.max(1, Math.min(99, Number(target.goal) || 99)), private: !!target.hidden
+  }));
+}
+
+async function syncProgressClocks(encounter) {
+  if (!game.user.isGM) return;
+  const database = globalProgressClocks();
+  if (!database?.addClock || !database?.update || !database?.delete) return;
+  const enabled = !!encounter.globalProgressClocks && ["active", "paused"].includes(encounter.status);
+  const entries = enabled ? progressClockEntries(encounter) : [];
+  const wanted = new Set(entries.map((entry) => entry.id));
+  for (const clock of database.values?.() ?? []) {
+    if (String(clock.id).startsWith(progressClockPrefix(encounter)) && !wanted.has(clock.id)) database.delete(clock.id);
+  }
+  for (const entry of entries) {
+    const data = { ...entry, type: "points" };
+    if (database.get?.(entry.id)) await database.update(data);
+    else await database.addClock(data);
+  }
+}
 
 function chasePartySize(encounter) {
   return Number(encounter?.chase?.partySize) || encounter?.participantIds?.length || Number(encounter?.chase?.basePartySize) || 4;
@@ -202,6 +240,7 @@ function chasePartySize(encounter) {
 
 function chaseGoal(encounter, target) {
   if (!isChase(encounter)) return Math.max(0, Number(target?.goal) || 0);
+  if (isSuccessCountChase(encounter)) return 0;
   return Math.max(1, (Number(target?.goal) || 0) + chasePartySize(encounter) - (Number(encounter.chase.basePartySize) || 4));
 }
 
@@ -241,12 +280,14 @@ function chaseObstacle(encounter) {
 }
 
 function chaseExhaustion(encounter, actorId) {
+  if (!isPostCombatChase(encounter)) return 0;
   return Math.max(0, Math.min(5, Number(encounter?.chase?.exhaustionByActor?.[actorId]) || 0));
 }
 
-function isChaseDropout(encounter, actorId) { return chaseExhaustion(encounter, actorId) >= 5; }
+function isChaseDropout(encounter, actorId) { return isPostCombatChase(encounter) && chaseExhaustion(encounter, actorId) >= 5; }
 
 function chaseExhaustionEffect(encounter, actor, check) {
+  if (!isPostCombatChase(encounter)) return { bonus: 0, disadvantage: false, label: "" };
   const level = chaseExhaustion(encounter, actor?.id);
   if (!isChase(encounter) || !level) return { bonus: 0, disadvantage: false, label: "" };
   if (encounter.chase.exhaustionMode === "legacy") {
@@ -305,6 +346,21 @@ function advanceChaseRound(encounter) {
     encounter.actorsActed = {};
     for (const request of encounter.pendingRequests) if (request.status === "pending") request.status = "cancelled";
     addLog(encounter, "round", `Advanced to consequence phase ${encounter.currentRound}.`);
+    return;
+  }
+  if (isOpenEndedChase(encounter)) {
+    const cleared = chaseObstacle(encounter);
+    encounter.chase.partyPosition = Math.min(encounter.targets.length, encounter.chase.partyPosition + 1);
+    encounter.activeTargetId = chaseObstacle(encounter)?.id ?? "";
+    if (cleared) addLog(encounter, "chase", `The party advances past ${cleared.name}.`, { targetId: cleared.id, partyPosition: encounter.chase.partyPosition });
+    advanceQuarry(encounter);
+    if (!encounter.chase.scriptedQuarry && encounter.chase.partyPosition >= encounter.chase.quarryPosition) concludeChase(encounter, "victory");
+    else if (!encounter.chase.scriptedQuarry && encounter.chase.quarryPosition >= encounter.targets.length && encounter.chase.partyPosition < encounter.targets.length) concludeChase(encounter, "escape");
+    else if (encounter.chase.partyPosition >= encounter.targets.length) concludeChase(encounter, "custom");
+    encounter.currentRound += 1;
+    encounter.actorsActed = {};
+    for (const request of encounter.pendingRequests) if (request.status === "pending") request.status = "cancelled";
+    addLog(encounter, "round", `Advanced to open-ended phase ${encounter.currentRound}.`);
     return;
   }
   advanceQuarry(encounter);
@@ -495,12 +551,14 @@ const Store = {
     encounter.updatedAt = Date.now(); normalize(encounter);
     const records = this.all(); records[encounter.id] = encounter;
     await game.settings.set(MODULE_ID, SETTINGS.encounters, records);
+    await syncProgressClocks(encounter);
     Hooks.callAll("nonCombatEncounterUpdated", encounter.id);
     if (game.user.isGM && encounter.id === this.activeId()) game.socket.emit(SOCKET, { action: "sync", encounter: publicEncounter(encounter) });
   },
   async remove(id) {
-    const records = this.all(); delete records[id];
+    const records = this.all(); const encounter = records[id]; delete records[id];
     await game.settings.set(MODULE_ID, SETTINGS.encounters, records);
+    if (encounter) await syncProgressClocks({ ...normalize(encounter), status: "ended" });
     if (this.activeId() === id) await game.settings.set(MODULE_ID, SETTINGS.active, "");
     Hooks.callAll("nonCombatEncounterUpdated", id);
   },
@@ -778,6 +836,19 @@ class EncounterManager extends HandlebarsApplicationMixin(ApplicationV2) {
     const activeId = Store.activeId();
     return { ...context, isGM: game.user.isGM, activeEncounter: !!activeId, encounters: Object.values(Store.all()).map(normalize).sort((a, b) => b.updatedAt - a.updatedAt).map((encounter) => ({ ...encounter, typeLabel: TYPE_LABELS[encounter.type], active: encounter.id === activeId })) };
   }
+  async _onRender(context, options) {
+    await super._onRender(context, options);
+    for (const entry of this.element.querySelectorAll(".nce-manager-entry")) {
+      const open = () => openSidebarEncounter(entry.dataset.id);
+      entry.addEventListener("click", open);
+      entry.addEventListener("keydown", (event) => { if (event.key === "Enter") open(); });
+      entry.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        showEncounterContextMenu(event, entry.dataset.id);
+      });
+    }
+  }
   static async create(event) { if (await createEncounter(event)) this.render({ force: true }); }
   static edit(_event, target) { new EncounterEditor(Store.get(target.dataset.id)).render({ force: true }); }
   static async activate(_event, target) { await activateEncounter(target.dataset.id); this.render({ force: true }); }
@@ -814,13 +885,15 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     const editableEncounter = clone(this.encounter);
     const consequenceMode = isConsequenceChase(this.encounter);
     const openEndedMode = isOpenEndedChase(this.encounter);
+    const successCountMode = isSuccessCountChase(this.encounter);
+    const postCombatMode = isPostCombatChase(this.encounter);
     if (editableEncounter.type === "chase") editableEncounter.targets.forEach((target) => { target.adjustedGoal = chaseGoal(editableEncounter, target); });
     if (editableEncounter.type === "research") editableEncounter.targets.forEach((target) => {
       target.researchRows = actors.filter((actor) => actor.selected).map((actor) => ({ id: actor.id, name: actor.name, available: target.availabilityByActor?.[actor.id] !== false, maximum: researchMaxFor(target, actor.id), earned: researchPointsFor(target, actor.id) }));
     });
     const headings = { social: "Influence Targets", research: "Research Sources", chase: "Chase Obstacles", exploration: "Exploration Locations", skill: "Skill Challenges" };
     return {
-      ...context, encounter: editableEncounter, actors, isSocial: this.encounter.type === "social", isResearch: this.encounter.type === "research", isChase: this.encounter.type === "chase", isConsequenceChase: consequenceMode, isOpenEndedChase: openEndedMode, isQuickParse: ["chase", "skill"].includes(this.encounter.type) && !openEndedMode, isPointEncounter: ["social", "research", "skill", "chase"].includes(this.encounter.type), typeLabels: TYPE_LABELS,
+      ...context, encounter: editableEncounter, actors, isSocial: this.encounter.type === "social", isResearch: this.encounter.type === "research", isChase: this.encounter.type === "chase", isConsequenceChase: consequenceMode, isOpenEndedChase: openEndedMode, isSuccessCountChase: successCountMode, isPostCombatChase: postCombatMode, isNonPostCombatChase: this.encounter.type === "chase" && !postCombatMode, isQuickParse: ["chase", "skill"].includes(this.encounter.type) && !openEndedMode, isPointEncounter: ["social", "research", "skill", "chase"].includes(this.encounter.type), typeLabels: TYPE_LABELS,
       checkChoices: Object.fromEntries(checkChoices()), checkChoicesWithAll: Object.fromEntries([["", "All checks"], ...checkChoices()]),
       targetChoices: Object.fromEntries([["", "This target"], ...this.encounter.targets.map((target) => [target.id, displayName(target)])]),
       dcVisibilities: { hidden: "Hidden", relative: "Relative difficulty", exact: "Exact DCs" }, criticalModes: { none: "No automatic critical results", margin5: "Critical success/failure at DC ±5" },
@@ -828,8 +901,74 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
       rewardKinds: { narrative: "Narrative reward", item: "Item reward", currency: "Currency reward", modifier: "Mechanical modifier", points: "Points against a target" }, rewardActivations: { automatic: "Automatic", manual: "GM activates" }, currencies: { cp: "Copper (cp)", sp: "Silver (sp)", ep: "Electrum (ep)", gp: "Gold (gp)", pp: "Platinum (pp)" }, dropLabel: dropLabels[this.encounter.type], addTargetLabel: addTargetLabels[this.encounter.type], removeTargetLabel: removeTargetLabels[this.encounter.type], elementHeading: headings[this.encounter.type], researchPointModes: { shared: "Shared source progress", individual: "Track each character's RP" }, chaseResolutions: { obstacle: "Obstacle Chase — clear each obstacle with Chase Points", consequence: "Consequence Chase — everyone checks once per phase" }, chaseTurnOrders: { before: "Quarry acts before the party", after: "Quarry acts after the party" }, exhaustionModes: { "2024": "2024 Exhaustion (−2 per level to d20 Tests)", legacy: "Optional legacy Exhaustion" }, dcReference: [{ label: "Very Easy", dc: 5 }, { label: "Easy", dc: 10 }, { label: "Medium", dc: 15 }, { label: "Hard", dc: 20 }, { label: "Very Hard", dc: 25 }, { label: "Nearly Impossible", dc: 30 }], chasePartySize: chasePartySize(this.encounter)
     };
   }
+  _organizeTargetEditorTabs() {
+    const targetsTab = this.element.querySelector('.tab[data-group="nce-editor"][data-tab="targets"]');
+    const checksTab = this.element.querySelector('.tab[data-group="nce-editor"][data-tab="checks"]');
+    const resultsTab = this.element.querySelector('.tab[data-group="nce-editor"][data-tab="results"]');
+    if (!targetsTab || !checksTab || !resultsTab) return;
+
+    for (const target of targetsTab.querySelectorAll(':scope > fieldset.nce-target')) {
+      const targetName = target.querySelector(':scope > legend')?.textContent?.trim() || "Target";
+      const directChildren = () => [...target.children];
+      const checksHeading = directChildren().find((element) => element.tagName === "H3" && element.textContent.trim() === "Available Checks");
+      const actions = directChildren().find((element) => element.classList.contains("nce-card-actions"));
+      const socialConfig = target.querySelector(':scope > .nce-social-config');
+
+      if (checksHeading) {
+        const checkNodes = [];
+        for (let node = checksHeading; node && node !== actions && node !== socialConfig;) {
+          checkNodes.push(node);
+          node = node.nextElementSibling;
+        }
+        const checkCard = document.createElement("fieldset");
+        checkCard.className = "nce-tab-target-card";
+        const legend = document.createElement("legend");
+        legend.textContent = targetName;
+        checkCard.append(legend);
+        checksTab.append(checkCard);
+        checkCard.append(...checkNodes);
+        const addCheck = actions?.querySelector('[data-action="addCheck"]');
+        if (addCheck) checkCard.append(addCheck);
+      }
+
+      if (socialConfig) {
+        const resultsCard = document.createElement("fieldset");
+        resultsCard.className = "nce-tab-target-card";
+        const legend = document.createElement("legend");
+        legend.textContent = targetName;
+        resultsCard.append(legend);
+        resultsTab.append(resultsCard);
+        resultsCard.append(socialConfig);
+      }
+
+      if (actions && !actions.children.length) actions.remove();
+    }
+    if (!checksTab.children.length) checksTab.innerHTML = '<p class="hint">No checks are configured for this encounter.</p>';
+    if (!resultsTab.children.length) resultsTab.innerHTML = '<p class="hint">No results or rewards are configured for this encounter.</p>';
+  }
   async _onRender(context, options) {
     await super._onRender(context, options);
+    this.element.classList.toggle("nce-open-ended-chase", isOpenEndedChase(this.encounter));
+    this.element.classList.toggle("nce-success-count-chase", isSuccessCountChase(this.encounter));
+    this.element.classList.toggle("nce-non-post-combat-chase", isChase(this.encounter) && !isPostCombatChase(this.encounter));
+    this._organizeTargetEditorTabs();
+    if (isSuccessCountChase(this.encounter)) {
+      const targetsTab = this.element.querySelector('.tab[data-group="nce-editor"][data-tab="targets"]');
+      if (targetsTab && !targetsTab.querySelector(".nce-success-count-summary")) {
+        const hint = document.createElement("p");
+        hint.className = "hint nce-success-count-summary";
+        hint.textContent = "Each obstacle is a phase. There is no Chase Point threshold; successful checks add to the encounter-wide Chase Successes total.";
+        targetsTab.querySelector("h2")?.after(hint);
+      }
+    }
+    for (const tab of this.element.querySelectorAll(".nce-editor-tabs [data-tab]")) {
+      tab.addEventListener("click", (event) => {
+        event.preventDefault();
+        const tabName = tab.dataset.tab;
+        for (const item of this.element.querySelectorAll(".nce-editor-tabs [data-tab]")) item.classList.toggle("active", item.dataset.tab === tabName);
+        for (const panel of this.element.querySelectorAll('.tab[data-group="nce-editor"]')) panel.classList.toggle("active", panel.dataset.tab === tabName);
+      });
+    }
     const zone = this.element.querySelector("[data-target-drop-zone]");
     if (zone) {
       zone.addEventListener("dragenter", (event) => { event.preventDefault(); zone.classList.add("dragover"); });
@@ -856,6 +995,11 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
         if (modified) modified.value = String(Boolean(label.value.trim()));
       });
     }
+    const openEnded = this.element.querySelector('[name="chase.openEnded"]');
+    openEnded?.addEventListener("change", async () => {
+      this._capture();
+      await this.render({ force: true });
+    });
   }
   async _onTargetDrop(event) {
     event.preventDefault();
@@ -917,7 +1061,8 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     this.encounter.participantIds = [...this.element.querySelectorAll('[name="participantIds"]:checked')].map((input) => input.value);
     for (const actor of game.actors.filter((entry) => entry.type === "character")) this.encounter.participantNicknames[actor.id] = this.element.querySelector(`[name="participantNicknames.${actor.id}"]`)?.value.trim() ?? "";
     this.encounter.showProgressClocks = this.element.querySelector('[name="showProgressClocks"]')?.checked ?? false;
-    this.encounter.autoAdvance = isConsequenceChase(this.encounter) || (this.element.querySelector('[name="autoAdvance"]')?.checked ?? true);
+    this.encounter.globalProgressClocks = this.element.querySelector('[name="globalProgressClocks"]')?.checked ?? false;
+    this.encounter.autoAdvance = isSuccessCountChase(this.encounter) || (this.element.querySelector('[name="autoAdvance"]')?.checked ?? true);
     if (this.encounter.type === "chase") { this.encounter.chase.scriptedQuarry = this.element.querySelector('[name="chase.scriptedQuarry"]')?.checked ?? false; this.encounter.chase.openEnded = this.element.querySelector('[name="chase.openEnded"]')?.checked ?? false; }
     this._captureTargetOptions();
     normalize(this.encounter);
@@ -958,7 +1103,8 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     this.encounter.participantIds = [...this.element.querySelectorAll('[name="participantIds"]:checked')].map((input) => input.value);
     for (const actor of game.actors.filter((entry) => entry.type === "character")) this.encounter.participantNicknames[actor.id] = this.element.querySelector(`[name="participantNicknames.${actor.id}"]`)?.value.trim() ?? "";
     this.encounter.showProgressClocks = this.element.querySelector('[name="showProgressClocks"]')?.checked ?? false;
-    this.encounter.autoAdvance = isConsequenceChase(this.encounter) || (this.element.querySelector('[name="autoAdvance"]')?.checked ?? true);
+    this.encounter.globalProgressClocks = this.element.querySelector('[name="globalProgressClocks"]')?.checked ?? false;
+    this.encounter.autoAdvance = isSuccessCountChase(this.encounter) || (this.element.querySelector('[name="autoAdvance"]')?.checked ?? true);
     if (this.encounter.type === "chase") { this.encounter.chase.scriptedQuarry = this.element.querySelector('[name="chase.scriptedQuarry"]')?.checked ?? false; this.encounter.chase.openEnded = this.element.querySelector('[name="chase.openEnded"]')?.checked ?? false; }
     this._captureTargetOptions();
     normalize(this.encounter);
@@ -1092,6 +1238,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     actions: {
       manage: EncounterTracker.manage, selectActor: EncounterTracker.selectActor, selectTarget: EncounterTracker.selectTarget,
       requestCheck: EncounterTracker.requestCheck, adjustPoints: EncounterTracker.adjustPoints, adjustResearchPoints: EncounterTracker.adjustResearchPoints, nextRound: EncounterTracker.nextRound,
+      adjustChaseSuccesses: EncounterTracker.adjustChaseSuccesses,
       completeRequest: EncounterTracker.completeRequest, cancelRequest: EncounterTracker.cancelRequest,
       toggleReward: EncounterTracker.toggleReward, applyReward: EncounterTracker.applyReward,
       undo: EncounterTracker.undo, pause: EncounterTracker.pause, end: EncounterTracker.end,
@@ -1099,12 +1246,84 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     }
   };
   static PARTS = { main: { template: `modules/${MODULE_ID}/templates/tracker.hbs`, root: true, scrollable: [".nce-tracker"] } };
+  _organizeTrackerTabs() {
+    const root = this.element;
+    const header = root.querySelector(":scope > header");
+    if (!header) return;
+    const existingNavigation = root.querySelector(":scope > .nce-tracker-tabs");
+    const existingContent = root.querySelector(":scope > .nce-tracker-content");
+    if (existingContent) {
+      for (const panel of existingContent.querySelectorAll(":scope > .tab")) {
+        for (const child of [...panel.children]) root.append(child);
+      }
+      existingContent.remove();
+    }
+    existingNavigation?.remove();
+    const navigation = document.createElement("nav");
+    navigation.className = "tabs sheet-tabs nce-tracker-tabs";
+    navigation.innerHTML = '<a class="item active" data-tab="encounter"><i class="fa-solid fa-comments"></i> Encounter</a><a class="item" data-tab="log"><i class="fa-solid fa-list"></i> Check Log</a>';
+    const content = document.createElement("div");
+    content.className = "nce-tracker-content";
+    const encounterTab = document.createElement("div");
+    encounterTab.className = "tab active";
+    encounterTab.dataset.tab = "encounter";
+    const logTab = document.createElement("div");
+    logTab.className = "tab";
+    logTab.dataset.tab = "log";
+    for (const child of [...root.children]) {
+      if (child === header) continue;
+      encounterTab.append(child);
+    }
+    // A forced ApplicationV2 re-render can leave a previous tab wrapper in
+    // the root briefly. Keep the one actual log and discard only redundant
+    // rendered copies, rather than nesting every copy into the next tab.
+    const [encounterLog, ...duplicateLogs] = encounterTab.querySelectorAll(".nce-log");
+    duplicateLogs.forEach((log) => log.remove());
+    if (encounterLog) {
+      if (encounterLog instanceof HTMLDetailsElement) encounterLog.open = true;
+      logTab.append(encounterLog);
+    }
+    if (!logTab.children.length) logTab.innerHTML = '<p class="hint empty-log">No checks have been completed.</p>';
+    content.append(encounterTab, logTab);
+    header.after(navigation, content);
+    for (const tab of navigation.querySelectorAll("[data-tab]")) {
+      tab.addEventListener("click", (event) => {
+        event.preventDefault();
+        const tabName = tab.dataset.tab;
+        for (const item of navigation.querySelectorAll("[data-tab]")) item.classList.toggle("active", item.dataset.tab === tabName);
+        for (const panel of content.querySelectorAll(":scope > .tab")) panel.classList.toggle("active", panel.dataset.tab === tabName);
+      });
+    }
+  }
   async _onRender(context, options) {
     await super._onRender(context, options);
-    const windowContent = this.element.closest(".application")?.querySelector(".window-content");
-    if (!windowContent) return;
-    windowContent.style.setProperty("min-height", "0");
-    windowContent.style.setProperty("overflow-y", "auto", "important");
+    this._organizeTrackerTabs();
+    const trackerContent = this.element.querySelector(":scope > .nce-tracker-content");
+    if (!trackerContent) return;
+    trackerContent.style.setProperty("min-height", "0");
+    trackerContent.style.setProperty("overflow-y", "auto", "important");
+    const app = this.element.closest(".application");
+    app?.classList.toggle("nce-non-post-combat-chase", isChase(Store.get()) && !isPostCombatChase(Store.get()));
+    app?.classList.toggle("nce-standard-chase", isChase(Store.get()) && !isConsequenceChase(Store.get()) && !isPostCombatChase(Store.get()));
+    app?.classList.toggle("nce-success-count-chase", isSuccessCountChase(Store.get()));
+    if (isSuccessCountChase(Store.get())) {
+      const successes = Store.get().chase.successes;
+      const status = this.element.querySelector(".nce-chase-status");
+      if (status && !status.querySelector(".nce-success-count-summary")) {
+        const summary = document.createElement("p");
+        summary.className = "nce-success-count-summary";
+        summary.textContent = `${successes} Chase Success${successes === 1 ? "" : "es"} — each participant makes one GM-adjudicated check this phase.`;
+        status.querySelector("h3")?.after(summary);
+        if (game.user.isGM) {
+          const controls = document.createElement("div");
+          controls.className = "nce-inline-actions nce-chase-success-controls";
+          controls.innerHTML = '<button type="button" data-action="adjustChaseSuccesses" data-delta="-1"><i class="fa-solid fa-minus"></i> 1 Success</button><button type="button" data-action="adjustChaseSuccesses" data-delta="1"><i class="fa-solid fa-plus"></i> 1 Success</button>';
+          summary.after(controls);
+        }
+      }
+      const activeTarget = this.element.querySelector(".nce-active-target");
+      activeTarget?.querySelectorAll(":scope > .nce-progress, :scope > .nce-points").forEach((element) => element.remove());
+    }
   }
   async _prepareContext(options) {
     const context = await super._prepareContext(options);
@@ -1116,7 +1335,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     const participants = encounter ? participantActors(encounter).map((actor) => ({ id: actor.id, name: actor.name, displayName: encounter.participantNicknames[actor.id]?.trim() || actor.name, image: actor.img, owned: canControlActor(actor), acted: !!encounter.actorsActed[actor.id], selected: actor.id === viewActorId, researchTotal: encounter.targets.reduce((sum, source) => sum + researchPointsFor(source, actor.id), 0), exhaustion: chaseExhaustion(encounter, actor.id), droppedOut: isChaseDropout(encounter, actor.id) })) : [];
     if (encounter) {
       const visibleTargets = !game.user.isGM && isResearch(encounter) ? encounter.targets.filter((target) => owned.some((actor) => researchSourceAvailable(target, actor.id))) : encounter.targets;
-      encounter.targets = visibleTargets.map((target, index) => { const effectiveGoal = isConsequenceChase(encounter) ? 0 : chaseGoal(encounter, target); return { ...target, checks: isOpenEndedChase(encounter) ? [{ id: "open-ended", key: "ability:str", label: "GM Adjudicated Check", dc: 0, guidance: "The GM selects the check and difficulty after hearing the player's approach." }] : target.checks, displayName: displayName(target), selected: target.id === viewTargetId, effectiveGoal, progressPct: effectiveGoal ? Math.min(100, Math.max(0, Math.round((target.points / effectiveGoal) * 100))) : 0, sourceAvailable: !isResearch(encounter) || (!!viewActorId && researchSourceAvailable(target, viewActorId)), selectedActorPoints: researchPointsFor(target, viewActorId), selectedActorMaximum: researchMaxFor(target, viewActorId), researchRows: participants.map((actor) => ({ ...actor, sourcePoints: researchPointsFor(target, actor.id), sourceMaximum: researchMaxFor(target, actor.id), available: researchSourceAvailable(target, actor.id) })), obstacleIndex: index + 1, obstacleCurrent: isChase(encounter) && index === encounter.chase.partyPosition, obstacleCompleted: isChase(encounter) && index < encounter.chase.partyPosition, obstacleQuarry: !isConsequenceChase(encounter) && isChase(encounter) && index === encounter.chase.quarryPosition, unlockedThresholds: target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => ({ ...threshold, rewards: threshold.rewards.filter((reward) => game.user.isGM || (reward.playerVisible && reward.active)).map((reward) => ({ ...reward, description: rewardDetail(reward) })) })) }; });
+      encounter.targets = visibleTargets.map((target, index) => { const effectiveGoal = isSuccessCountChase(encounter) ? 0 : chaseGoal(encounter, target); return { ...target, checks: isOpenEndedChase(encounter) ? [{ id: "open-ended", key: "ability:str", label: "GM Adjudicated Check", dc: 0, guidance: "The GM selects the check and difficulty after hearing the player's approach." }] : target.checks, displayName: displayName(target), selected: target.id === viewTargetId, effectiveGoal, progressPct: effectiveGoal ? Math.min(100, Math.max(0, Math.round((target.points / effectiveGoal) * 100))) : 0, sourceAvailable: !isResearch(encounter) || (!!viewActorId && researchSourceAvailable(target, viewActorId)), selectedActorPoints: researchPointsFor(target, viewActorId), selectedActorMaximum: researchMaxFor(target, viewActorId), researchRows: participants.map((actor) => ({ ...actor, sourcePoints: researchPointsFor(target, actor.id), sourceMaximum: researchMaxFor(target, actor.id), available: researchSourceAvailable(target, actor.id) })), obstacleIndex: index + 1, obstacleCurrent: isChase(encounter) && index === encounter.chase.partyPosition, obstacleCompleted: isChase(encounter) && index < encounter.chase.partyPosition, obstacleQuarry: !isConsequenceChase(encounter) && isChase(encounter) && index === encounter.chase.quarryPosition, unlockedThresholds: target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => ({ ...threshold, rewards: threshold.rewards.filter((reward) => game.user.isGM || (reward.playerVisible && reward.active)).map((reward) => ({ ...reward, description: rewardDetail(reward) })) })) }; });
     }
     const selectedTarget = encounter?.targets.find((target) => target.id === viewTargetId);
     const selectedActor = participants.find((actor) => actor.id === viewActorId);
@@ -1127,7 +1346,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
       return { ...request, modifier: signed(actorCheckModifier(game.actors.get(request.actorId), requestCheck?.key)) };
     }) ?? [] : [];
     const canChase = !isChase(encounter) || (!encounter.chase.concluded && !!selectedTarget?.obstacleCurrent && !!selectedActor && !selectedActor.droppedOut);
-    return { ...context, encounter, participants, selectedTarget, selectedActor, pendingRequests, typeLabel: encounter ? TYPE_LABELS[encounter.type] : "", noEncounter: !encounter, isGM: game.user.isGM, isResearch: isResearch(encounter), isChase: isChase(encounter), isConsequenceChase: isConsequenceChase(encounter), isOpenEndedChase: isOpenEndedChase(encounter), consequenceOutcome: consequenceOutcome(encounter), canRequest: encounter?.status === "active" && !!selectedActor && !selectedActor.acted && (!isResearch(encounter) || !!selectedTarget?.sourceAvailable) && canChase && (!isOpenEndedChase(encounter) || game.user.isGM), showDC: (game.user.isGM || encounter?.dcVisibility === "exact") && !isOpenEndedChase(encounter), hasUndo: game.user.isGM && !!encounter?.history.length, chaseQuarryPosition: isChase(encounter) ? encounter.chase.quarryPosition + 1 : 0, chasePhaseCount: encounter?.targets?.length ?? 0 };
+    return { ...context, encounter, participants, selectedTarget, selectedActor, pendingRequests, typeLabel: encounter ? TYPE_LABELS[encounter.type] : "", noEncounter: !encounter, isGM: game.user.isGM, isResearch: isResearch(encounter), isChase: isChase(encounter), isConsequenceChase: isConsequenceChase(encounter), isOpenEndedChase: isOpenEndedChase(encounter), isSuccessCountChase: isSuccessCountChase(encounter), isPostCombatChase: isPostCombatChase(encounter), consequenceOutcome: consequenceOutcome(encounter), canRequest: encounter?.status === "active" && !!selectedActor && !selectedActor.acted && (!isResearch(encounter) || !!selectedTarget?.sourceAvailable) && canChase && (!isOpenEndedChase(encounter) || game.user.isGM), showDC: (game.user.isGM || encounter?.dcVisibility === "exact") && !isOpenEndedChase(encounter), hasUndo: game.user.isGM && !!encounter?.history.length, chaseQuarryPosition: isChase(encounter) ? encounter.chase.quarryPosition + 1 : 0, chasePhaseCount: encounter?.targets?.length ?? 0 };
   }
   static manage() { const encounter = Store.get(); if (encounter) new EncounterEditor(encounter).render({ force: true }); else manager.render({ force: true }); }
   static selectActor(_event, target) { viewActorId = target.dataset.id; this.render({ force: true }); }
@@ -1139,17 +1358,25 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
   static requestCheck(_event, target) {
     const encounter = Store.get();
     const actor = game.actors.get(viewActorId);
-    const selectedTarget = encounter?.targets.find((entry) => entry.id === viewTargetId);
-    const check = selectedTarget?.checks.find((entry) => entry.id === target.dataset.checkId);
-    if (!encounter || !actor || !check || !canControlActor(actor) || encounter.actorsActed[actor.id] || (isResearch(encounter) && !researchSourceAvailable(selectedTarget, actor.id))) return ui.notifications.warn("Choose an eligible character and available source.");
-    if (isOpenEndedChase(encounter)) return this.openEndedCheck(encounter, actor, selectedTarget);
+    const actionTarget = target?.closest?.('[data-action="requestCheck"]') ?? _event?.target?.closest?.('[data-action="requestCheck"]') ?? target;
+    const selectedTarget = isChase(encounter)
+      ? chaseObstacle(encounter)
+      : encounter?.targets.find((entry) => entry.id === viewTargetId);
+    if (isOpenEndedChase(encounter)) return EncounterTracker.openEndedCheck(encounter, actor, selectedTarget);
+    const check = selectedTarget?.checks.find((entry) => entry.id === actionTarget?.dataset?.checkId);
+    if (!encounter || encounter.status !== "active") return ui.notifications.warn("There is no active encounter.");
+    if (!actor || !canControlActor(actor)) return ui.notifications.warn("Select a participant you can control.");
+    if (!selectedTarget) return ui.notifications.warn(isChase(encounter) ? "There is no current chase obstacle." : "Select an encounter target.");
+    if (!check) return ui.notifications.warn("That check is no longer available. Refresh the encounter window and try again.");
+    if (encounter.actorsActed[actor.id]) return ui.notifications.warn(`${actor.name} has already acted this round.`);
+    if (isResearch(encounter) && !researchSourceAvailable(selectedTarget, actor.id)) return ui.notifications.warn("That research source is unavailable to this character.");
     const request = { action: "request", encounterId: encounter.id, userId: game.user.id, actorId: actor.id, targetId: selectedTarget.id, checkId: check.id };
     if (game.user.isGM) handlePlayerRequest(request);
     else game.socket.emit(SOCKET, request);
     ui.notifications.info(`Requested ${check.label} for ${actor.name}.`);
   }
   static async openEndedCheck(encounter, actor, selectedTarget) {
-    if (!game.user.isGM || !isOpenEndedChase(encounter) || !selectedTarget) return;
+    if (!game.user.isGM || !isOpenEndedChase(encounter) || !actor || !selectedTarget || !canControlActor(actor) || encounter.actorsActed[actor.id] || encounter.chase.concluded || selectedTarget.id !== chaseObstacle(encounter)?.id || isChaseDropout(encounter, actor.id)) return ui.notifications.warn("Choose an eligible participant and the current obstacle.");
     const request = { id: randomID(), status: "pending", createdAt: Date.now(), userId: game.user.id, actorId: actor.id, actorName: actor.name, targetId: selectedTarget.id, targetName: selectedTarget.name, checkId: "open-ended", checkLabel: "GM Adjudicated Check", openEnded: true };
     await mutateActive("Opened an open-ended chase check", async (current) => {
       current.pendingRequests.push(request);
@@ -1183,6 +1410,15 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     });
     const updatedTarget = Store.get()?.targets.find((entry) => entry.id === targetId);
     if (updatedTarget) await postThresholdCards(updatedTarget, gained, lost);
+  }
+  static async adjustChaseSuccesses(_event, target) {
+    const delta = Number(target.dataset.delta) || 0;
+    if (!delta) return;
+    await mutateActive(`${delta >= 0 ? "Added" : "Removed"} ${Math.abs(delta)} Chase Success`, async (encounter) => {
+      if (!isSuccessCountChase(encounter)) return;
+      encounter.chase.successes = Math.max(0, encounter.chase.successes + delta);
+      addLog(encounter, "chase", `GM adjusted Chase Successes: ${delta >= 0 ? "+" : ""}${delta} (now ${encounter.chase.successes}).`);
+    });
   }
   static async adjustResearchPoints(_event, target) {
     const targetId = target.dataset.id;
@@ -1288,7 +1524,8 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
         currentTarget.researchPointsByActor[actorId] = nextActorPoints;
         currentTarget.points = current.research.pointMode === "individual" ? researchTotal(currentTarget) : Math.max(0, previousPoints + earnedPoints);
         updateResearchExhaustion(current, currentTarget);
-      } else if (isConsequenceChase(current)) {
+      } else if (isSuccessCountChase(current)) {
+        if (isOpenEndedChase(current)) earnedPoints = ["success", "criticalSuccess"].includes(result.degree.key) ? 1 : 0;
         current.chase.successes = Math.max(0, current.chase.successes + earnedPoints);
       } else currentTarget.points = Math.max(0, currentTarget.points + earnedPoints);
       for (const selected of result.selectedModifiers) {
@@ -1310,9 +1547,9 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
       currentRequest.pointsAwarded = earnedPoints;
       currentRequest.gainedThresholdIds = gained.map((entry) => entry.id);
       currentRequest.lostThresholdIds = lost.map((entry) => entry.id);
-      addLog(current, "action", `${currentRequest.actorName} rolled ${result.total} on ${currentRequest.checkLabel}: ${result.degree.label}; ${earnedPoints >= 0 ? "+" : ""}${earnedPoints} ${isConsequenceChase(current) ? "Chase Success" : "point"}${Math.abs(earnedPoints) === 1 ? "" : "s"}.`, currentRequest);
+      addLog(current, "action", `${currentRequest.actorName} rolled ${result.total} on ${currentRequest.checkLabel}: ${result.degree.label}; ${earnedPoints >= 0 ? "+" : ""}${earnedPoints} ${isSuccessCountChase(current) ? "Chase Success" : "point"}${Math.abs(earnedPoints) === 1 ? "" : "s"}.`, currentRequest);
       if (isChase(current)) {
-        const exhaustion = result.degree.key === "criticalFailure" ? currentTarget.criticalFailureExhaustion : result.degree.key === "failure" ? currentTarget.failureExhaustion : 0;
+        const exhaustion = isPostCombatChase(current) ? (result.degree.key === "criticalFailure" ? currentTarget.criticalFailureExhaustion : result.degree.key === "failure" ? currentTarget.failureExhaustion : 0) : 0;
         if (exhaustion) {
           const prior = chaseExhaustion(current, currentRequest.actorId);
           const level = Math.min(5, prior + exhaustion);
@@ -1320,7 +1557,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
           addLog(current, "chase", `${currentRequest.actorName} gains ${exhaustion} Chase Exhaustion (now ${level}).`, { actorId: currentRequest.actorId, exhaustion: level });
           if (level >= 5 && prior < 5) chaseDropout = currentRequest.actorName;
         }
-        if (!isConsequenceChase(current) && chaseGoal(current, currentTarget) && currentTarget.points >= chaseGoal(current, currentTarget)) {
+        if (!isSuccessCountChase(current) && chaseGoal(current, currentTarget) && currentTarget.points >= chaseGoal(current, currentTarget)) {
           const gapBefore = current.chase.quarryPosition - current.chase.partyPosition;
           current.chase.partyPosition = Math.min(current.targets.length, current.chase.partyPosition + 1);
           current.activeTargetId = chaseObstacle(current)?.id ?? "";
@@ -1550,6 +1787,9 @@ Hooks.once("ready", async () => {
   game[MODULE_ID] = { open: () => { if (Store.get()?.status === "active") tracker.render(true); }, manage: () => manager.render({ force: true }), Store };
   game.socket.on(SOCKET, handleSocketMessage);
   await migrateEncounters();
+  if (game.user.isGM) {
+    for (const encounter of Object.values(Store.all())) await syncProgressClocks(normalize(encounter));
+  }
   renderEncounterSidebar();
   if (game.user.isGM) {
     const active = Store.get();
