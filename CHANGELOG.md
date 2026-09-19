@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.1 — 2026-09-18
+
+- Fixed the release archive layout so `module.json` is at the ZIP root, allowing Forge to discover the installed module.
+
 ## 0.1.0 — 2026-09-18
 
 - Added Research and Chase encounter workflows, including player-safe synchronization, configurable checks, points, thresholds, rewards, and Journal publication.
