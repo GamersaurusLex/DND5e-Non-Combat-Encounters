@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.1.0 — 2026-09-18
+
+- Added Research and Chase encounter workflows, including player-safe synchronization, configurable checks, points, thresholds, rewards, and Journal publication.
+- Added D&D 5e ability checks, skills, saving throws, tools, advantage/disadvantage, roll confirmation, and configurable critical outcomes.
+- Added GM approval of player check requests, actor ownership validation, automatic encounter opening, and actionable player encounter tracking.
+- Added chase obstacles, quarry movement and pacing, exhaustion options, obstacles, progress, win/escape states, and participant dropout at Exhaustion 5.
+- Added social encounter targets, weaknesses, resistances, circumstances, narrative and mechanical rewards, and optional progress clocks.
+- Added actor and item drag-and-drop for encounter targets, sources, obstacles, locations, and challenges.
+- Rebuilt the sidebar to match the PF2e module: native-style type selection on creation, compact icon-and-name directory rows, and right-click lifecycle, duplicate, import/export, and delete actions.
+
 - Added schema-versioned encounter migration that preserves existing world records.
 - Added the shared runtime foundation: authoritative GM persistence, socket synchronization, reconnect recovery, automatic encounter opening, participant ownership validation, actor/target selection, acted-state tracking, rounds, persistent check requests, manual points, logs, complete-state undo, pause/resume, and End & Publish.
 - Added player-safe encounter payloads that omit undo history, pending GM requests, and hidden DC values.
