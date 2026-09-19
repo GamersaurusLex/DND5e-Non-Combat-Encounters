@@ -564,7 +564,7 @@ async function pauseEncounter(id) {
   encounter.status = "paused";
   await Store.save(encounter);
   await Store.setActive(encounter.id);
-  tracker.render(false);
+  tracker.close();
 }
 
 async function resumeEncounter(id) {
@@ -772,7 +772,7 @@ class EncounterManager extends HandlebarsApplicationMixin(ApplicationV2) {
   static async activate(_event, target) { await activateEncounter(target.dataset.id); this.render({ force: true }); }
   static async pause(_event, target) { await pauseEncounter(target.dataset.id); this.render({ force: true }); }
   static async resume(_event, target) { await resumeEncounter(target.dataset.id); this.render({ force: true }); }
-  static open() { tracker.render(true); }
+  static open() { if (Store.get()?.status === "active") tracker.render(true); }
   static async remove(_event, target) {
     await deleteEncounter(target.dataset.id); this.render({ force: true });
   }
@@ -1086,7 +1086,14 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
       concludeChase: EncounterTracker.concludeChase
     }
   };
-  static PARTS = { main: { template: `modules/${MODULE_ID}/templates/tracker.hbs` } };
+  static PARTS = { main: { template: `modules/${MODULE_ID}/templates/tracker.hbs`, root: true, scrollable: [".nce-tracker"] } };
+  async _onRender(context, options) {
+    await super._onRender(context, options);
+    const windowContent = this.element.closest(".application")?.querySelector(".window-content");
+    if (!windowContent) return;
+    windowContent.style.setProperty("min-height", "0");
+    windowContent.style.setProperty("overflow-y", "auto", "important");
+  }
   async _prepareContext(options) {
     const context = await super._prepareContext(options);
     const encounter = Store.get();
@@ -1375,7 +1382,7 @@ async function handleEncounterSidebarAction(event) {
   else if (action === "activate") await activateEncounter(id);
   else if (action === "pause") await pauseEncounter(id);
   else if (action === "resume") await resumeEncounter(id);
-  else if (action === "open") tracker.render(true);
+  else if (action === "open" && Store.get()?.status === "active") tracker.render(true);
   else if (action === "remove") await deleteEncounter(id);
 }
 
@@ -1495,7 +1502,7 @@ function renderEncounterSidebar() {
     panel.classList.remove("directory");
     const encounter = Store.get();
     panel.innerHTML = encounter
-      ? `<header class="dnd5e-nce-sidebar-header"><h2>${esc(encounter.name)}</h2></header><div class="dnd5e-nce-sidebar-player"><img src="${esc(encounter.image)}" alt=""><p>${esc(TYPE_LABELS[encounter.type])} — ${esc(encounter.status)}</p><button type="button" data-nce-action="open"><i class="fa-solid fa-up-right-from-square"></i> Open Encounter</button></div>`
+      ? `<header class="dnd5e-nce-sidebar-header"><h2>${esc(encounter.name)}</h2></header><div class="dnd5e-nce-sidebar-player"><img src="${esc(encounter.image)}" alt=""><p>${esc(TYPE_LABELS[encounter.type])} — ${esc(encounter.status)}</p>${encounter.status === "active" ? '<button type="button" data-nce-action="open"><i class="fa-solid fa-up-right-from-square"></i> Open Encounter</button>' : '<p class="hint">This encounter is paused.</p>'}</div>`
       : '<div class="dnd5e-nce-sidebar-player"><p>No active encounter.</p></div>';
   }
   panel.onclick = handleEncounterSidebarAction;
@@ -1509,7 +1516,7 @@ Hooks.once("init", () => {
 Hooks.once("ready", async () => {
   tracker = new EncounterTracker();
   manager = new EncounterManager();
-  game[MODULE_ID] = { open: () => tracker.render(true), manage: () => manager.render({ force: true }), Store };
+  game[MODULE_ID] = { open: () => { if (Store.get()?.status === "active") tracker.render(true); }, manage: () => manager.render({ force: true }), Store };
   game.socket.on(SOCKET, handleSocketMessage);
   await migrateEncounters();
   renderEncounterSidebar();
@@ -1522,12 +1529,18 @@ Hooks.once("ready", async () => {
   } else game.socket.emit(SOCKET, { action: "request-sync", userId: game.user.id });
 });
 
-Hooks.on("nonCombatEncounterUpdated", () => { renderCinematicHud(); tracker?.render(false); manager?.render(false); renderEncounterSidebar(); });
+Hooks.on("nonCombatEncounterUpdated", () => {
+  renderCinematicHud();
+  if (Store.get()?.status === "active") tracker?.render(false);
+  else tracker?.close();
+  manager?.render(false);
+  renderEncounterSidebar();
+});
 Hooks.on("renderSidebar", renderEncounterSidebar);
 Hooks.on("renderSceneControls", (_app, html) => {
   const root = html instanceof HTMLElement ? html : html?.[0]; const tools = root?.querySelector("#scene-controls-tools");
   if (!tools || tools.querySelector(".dnd5e-nce-control")) return;
   const item = document.createElement("li");
   item.innerHTML = '<button type="button" class="control ui-control tool icon fa-solid fa-people-group dnd5e-nce-control" aria-label="Non-Combat Encounters" data-tooltip="Non-Combat Encounters"></button>';
-  item.querySelector("button").addEventListener("click", () => tracker.render(true)); tools.append(item);
+  item.querySelector("button").addEventListener("click", () => { if (Store.get()?.status === "active") tracker.render(true); }); tools.append(item);
 });

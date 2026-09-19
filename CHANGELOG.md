@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.2 — 2026-09-18
+
+- Added Consequence Chase resolution: each eligible participant makes one check per phase, Chase Successes accumulate across the encounter, and configurable outcome tiers resolve the final consequence.
+- Added dedicated Consequence Chase setup while hiding quarry pacing, party-balance CP, and per-obstacle CP requirements that do not apply to that mode.
+- Fixed the active encounter tracker’s vertical scrolling.
+- Pausing now closes the encounter panel for every client, releases the cinematic background, and prevents reopening the tracker until the encounter resumes.
+- Renamed the Chase target removal control to **Remove Obstacle**.
+
 ## 0.1.1 — 2026-09-18
 
 - Fixed the release archive layout so `module.json` is at the ZIP root, allowing Forge to discover the installed module.

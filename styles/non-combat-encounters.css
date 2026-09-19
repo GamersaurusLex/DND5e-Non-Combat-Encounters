@@ -1,5 +1,7 @@
 .dnd5e-nce { --nce-accent: #7a3f2b; --nce-panel: color-mix(in srgb, var(--color-bg-option, #222) 88%, transparent); }
 .dnd5e-nce .window-content { padding: 0; }
+#dnd5e-nce-tracker .window-content { min-height: 0; overflow-y: auto; }
+.nce-tracker { min-height: 100%; }
 .nce-editor { display: flex; flex-direction: column; height: 100%; }
 .nce-editor .content { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 1rem 1.25rem; }
 .nce-editor fieldset { margin: 0 0 1rem; padding: 1rem; border-radius: 8px; }
