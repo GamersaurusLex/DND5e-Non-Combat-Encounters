@@ -148,6 +148,7 @@
 .nce-requests article { display: grid; grid-template-columns: 1fr auto auto; gap: .4rem; align-items: center; padding: .55rem; margin-bottom: .35rem; border: 1px solid var(--color-border-light-2); border-radius: 6px; }
 .nce-log { margin-top: .8rem; padding: .55rem; border: 1px solid var(--color-border-light-2); border-radius: 6px; }
 .nce-log summary { cursor: pointer; font-weight: 700; }
+.nce-check-count { margin: .45rem 0; color: var(--color-text-light-6, #b8b4aa); font-size: .9rem; }
 .nce-runtime-footer { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: 1rem; }
 .nce-runtime-footer button { flex: 1 1 130px; }
 .nce-runtime-footer .danger { color: var(--color-level-error, #d33); }

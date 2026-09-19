@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.9 — 2026-09-19
+
+- Fixed the player-facing Check Log: it now displays completed rolls while keeping GM-only requests, adjustments, and adjudication details private.
+- Added explicit completed-check counts for the current phase and the full encounter.
+- Fixed stale empty-log placeholders duplicating into the Encounter tab after tracker rerenders.
+- Open-Ended Chase checks now create one concise final log entry instead of a redundant pre-roll attempt entry.
+- Renamed encounter-wide Chase Successes to Chase Points throughout the UI, controls, editor, and logs to distinguish the tracked currency from a successful roll outcome.
+
 ## 0.1.8 — 2026-09-19
 
 - Grouped Open-Ended Chase checks by proficiency, placing the acting PC’s proficient skills, saves, and tools first.
