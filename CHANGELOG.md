@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.5 — 2026-09-19
+
+- Fixed Open-Ended Chase critical successes awarding only one Chase Success; they now correctly award two.
+- Added a persistent shared Chase Success total to the active encounter header for both GMs and players.
+
 ## 0.1.4 — 2026-09-19
 
 - Reworked the D&D editor, manager, and active tracker to match the proven PF2e encounter workflow, including tabs, compact manager rows, and native-style context menus.

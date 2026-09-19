@@ -1299,20 +1299,27 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     await super._onRender(context, options);
     this._organizeTrackerTabs();
     const trackerContent = this.element.querySelector(":scope > .nce-tracker-content");
-    if (!trackerContent) return;
-    trackerContent.style.setProperty("min-height", "0");
-    trackerContent.style.setProperty("overflow-y", "auto", "important");
     const app = this.element.closest(".application");
     app?.classList.toggle("nce-non-post-combat-chase", isChase(Store.get()) && !isPostCombatChase(Store.get()));
     app?.classList.toggle("nce-standard-chase", isChase(Store.get()) && !isConsequenceChase(Store.get()) && !isPostCombatChase(Store.get()));
     app?.classList.toggle("nce-success-count-chase", isSuccessCountChase(Store.get()));
     if (isSuccessCountChase(Store.get())) {
       const successes = Store.get().chase.successes;
+      const header = this.element.querySelector(":scope > header");
+      if (header && !header.querySelector(".nce-global-success-total")) {
+        const total = document.createElement("p");
+        total.className = "nce-global-success-total";
+        total.textContent = `${successes} Chase Success${successes === 1 ? "" : "es"}`;
+        header.append(total);
+      }
+      if (!trackerContent) return;
+      trackerContent.style.setProperty("min-height", "0");
+      trackerContent.style.setProperty("overflow-y", "auto", "important");
       const status = this.element.querySelector(".nce-chase-status");
       if (status && !status.querySelector(".nce-success-count-summary")) {
         const summary = document.createElement("p");
         summary.className = "nce-success-count-summary";
-        summary.textContent = `${successes} Chase Success${successes === 1 ? "" : "es"} — each participant makes one GM-adjudicated check this phase.`;
+        summary.textContent = `${successes} Chase Success${successes === 1 ? "" : "es"} — each eligible participant makes one check this phase.`;
         status.querySelector("h3")?.after(summary);
         if (game.user.isGM) {
           const controls = document.createElement("div");
@@ -1324,6 +1331,9 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
       const activeTarget = this.element.querySelector(".nce-active-target");
       activeTarget?.querySelectorAll(":scope > .nce-progress, :scope > .nce-points").forEach((element) => element.remove());
     }
+    if (!trackerContent) return;
+    trackerContent.style.setProperty("min-height", "0");
+    trackerContent.style.setProperty("overflow-y", "auto", "important");
   }
   async _prepareContext(options) {
     const context = await super._prepareContext(options);
@@ -1525,7 +1535,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
         currentTarget.points = current.research.pointMode === "individual" ? researchTotal(currentTarget) : Math.max(0, previousPoints + earnedPoints);
         updateResearchExhaustion(current, currentTarget);
       } else if (isSuccessCountChase(current)) {
-        if (isOpenEndedChase(current)) earnedPoints = ["success", "criticalSuccess"].includes(result.degree.key) ? 1 : 0;
+        if (isOpenEndedChase(current)) earnedPoints = result.degree.key === "criticalSuccess" ? 2 : result.degree.key === "success" ? 1 : 0;
         current.chase.successes = Math.max(0, current.chase.successes + earnedPoints);
       } else currentTarget.points = Math.max(0, currentTarget.points + earnedPoints);
       for (const selected of result.selectedModifiers) {
