@@ -1,7 +1,7 @@
 const MODULE_ID = "dnd5e-non-combat-encounters";
 const SETTINGS = { encounters: "encounters", active: "activeEncounter" };
 const SOCKET = `module.${MODULE_ID}`;
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 const MAX_HISTORY = 30;
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -71,6 +71,10 @@ function newTarget(type = "social") {
   return { id, sourceUuid: "", sourceType: "", name: names[type], nickname: "", image: "icons/svg/mystery-man.svg", description: "", background: "", appearance: "", personality: "", gmNotes: "", playerNotes: "", points: 0, goal: type === "chase" ? 3 : 4, checks: [newCheck()], modifiers: [], thresholds: [newThreshold(id)], hidden: false, exhausted: false, availabilityByActor: {}, maxPointsByActor: {}, researchPointsByActor: {}, failureExhaustion: type === "chase" ? 1 : 0, criticalFailureExhaustion: type === "chase" ? 1 : 0 };
 }
 
+function newConsequenceOutcome(minimum = 0, label = "Consequence", text = "") {
+  return { id: randomID(), minimum: Math.max(0, Number(minimum) || 0), label, text };
+}
+
 function newEncounter() {
   const id = randomID();
   return {
@@ -79,7 +83,7 @@ function newEncounter() {
     currentRound: 1, roundLimit: 0, targets: [newTarget("social")], activeActorId: "", activeTargetId: "",
     actorsActed: {}, pendingRequests: [], log: [], history: [], dcVisibility: "hidden", criticalMode: "none", participantNicknames: {}, showProgressClocks: false, autoAdvance: true,
     research: { intervalHours: 4, pointMode: "shared" },
-    chase: { quarryName: "The Quarry", quarryImage: "icons/svg/mystery-man.svg", quarryUuid: "", quarryPosition: 1, startPosition: 1, pace: 1, turnOrder: "before", scriptedQuarry: false, exhaustionMode: "2024", exhaustionByActor: {}, basePartySize: 4, partySize: 0, concluded: false, outcome: "", victoryText: "You caught the quarry!", escapeText: "The quarry escaped.", conclusionText: "The chase concludes." },
+    chase: { resolution: "obstacle", quarryName: "The Quarry", quarryImage: "icons/svg/mystery-man.svg", quarryUuid: "", quarryPosition: 1, startPosition: 1, pace: 1, turnOrder: "before", scriptedQuarry: false, exhaustionMode: "2024", exhaustionByActor: {}, basePartySize: 4, partySize: 0, successes: 0, consequenceOutcomes: [newConsequenceOutcome(0, "Setback", "The chase ends with serious consequences."), newConsequenceOutcome(4, "Mixed Outcome", "The party succeeds, but at a cost."), newConsequenceOutcome(8, "Strong Outcome", "The party achieves an excellent result.")], concluded: false, outcome: "", victoryText: "You caught the quarry!", escapeText: "The quarry escaped.", conclusionText: "The chase concludes." },
     createdAt: Date.now(), updatedAt: Date.now()
   };
 }
@@ -107,11 +111,16 @@ function normalize(encounter) {
   encounter.research.intervalHours = Math.max(1, Number(encounter.research.intervalHours) || 4);
   encounter.research.pointMode = encounter.research.pointMode === "individual" ? "individual" : "shared";
   encounter.chase = encounter.chase && typeof encounter.chase === "object" ? encounter.chase : {};
+  encounter.chase.resolution = encounter.chase.resolution === "consequence" ? "consequence" : "obstacle";
   encounter.chase.quarryName ||= "The Quarry"; encounter.chase.quarryImage ||= "icons/svg/mystery-man.svg"; encounter.chase.quarryUuid ??= "";
   encounter.chase.startPosition = Math.max(0, Number(encounter.chase.startPosition) || 0);
   encounter.chase.quarryPosition = Math.max(0, Number(encounter.chase.quarryPosition ?? encounter.chase.startPosition) || 0);
   encounter.chase.partyPosition = Math.max(0, Number(encounter.chase.partyPosition) || 0);
   encounter.chase.pace = Math.max(0, Number(encounter.chase.pace) || 1);
+  encounter.chase.successes = Math.max(0, Number(encounter.chase.successes) || 0);
+  encounter.chase.consequenceOutcomes = indexedArray(encounter.chase.consequenceOutcomes);
+  if (!encounter.chase.consequenceOutcomes.length) encounter.chase.consequenceOutcomes = [newConsequenceOutcome(0, "Consequence", encounter.chase.conclusionText || "The chase concludes.")];
+  encounter.chase.consequenceOutcomes.forEach((outcome) => { outcome.id ||= randomID(); outcome.minimum = Math.max(0, Number(outcome.minimum) || 0); outcome.label ||= "Consequence"; outcome.text ??= ""; });
   encounter.chase.basePartySize = Math.max(1, Number(encounter.chase.basePartySize) || 4);
   encounter.chase.partySize = Math.max(0, Number(encounter.chase.partySize) || 0);
   encounter.chase.turnOrder = encounter.chase.turnOrder === "after" ? "after" : "before";
@@ -174,6 +183,7 @@ function participantActors(encounter) {
 
 function isResearch(encounter) { return encounter?.type === "research"; }
 function isChase(encounter) { return encounter?.type === "chase"; }
+function isConsequenceChase(encounter) { return isChase(encounter) && encounter?.chase?.resolution === "consequence"; }
 
 function chasePartySize(encounter) {
   return Number(encounter?.chase?.partySize) || encounter?.participantIds?.length || Number(encounter?.chase?.basePartySize) || 4;
@@ -238,7 +248,8 @@ function chaseExhaustionEffect(encounter, actor, check) {
 function resetChase(encounter) {
   if (!isChase(encounter)) return;
   encounter.chase.partyPosition = 0;
-  encounter.chase.quarryPosition = Math.min(encounter.targets.length, encounter.chase.startPosition);
+  encounter.chase.quarryPosition = isConsequenceChase(encounter) ? 0 : Math.min(encounter.targets.length, encounter.chase.startPosition);
+  encounter.chase.successes = 0;
   encounter.chase.exhaustionByActor = {};
   encounter.chase.concluded = false;
   encounter.chase.outcome = "";
@@ -246,23 +257,45 @@ function resetChase(encounter) {
 }
 
 function advanceQuarry(encounter) {
-  if (!isChase(encounter) || encounter.chase.concluded || !encounter.chase.pace) return false;
+  if (!isChase(encounter) || isConsequenceChase(encounter) || encounter.chase.concluded || !encounter.chase.pace) return false;
   const before = encounter.chase.quarryPosition;
   encounter.chase.quarryPosition = Math.min(encounter.targets.length, before + encounter.chase.pace);
   if (encounter.chase.quarryPosition !== before) addLog(encounter, "chase", `${encounter.chase.quarryName} moves ahead.`, { quarryPosition: encounter.chase.quarryPosition });
   return encounter.chase.quarryPosition !== before;
 }
 
+function consequenceOutcome(encounter) {
+  return [...(encounter?.chase?.consequenceOutcomes ?? [])].sort((a, b) => b.minimum - a.minimum).find((entry) => encounter.chase.successes >= entry.minimum) ?? null;
+}
+
+function chaseOutcomeText(encounter, outcome) {
+  if (outcome === "consequence") return consequenceOutcome(encounter)?.text || encounter.chase.conclusionText;
+  return outcome === "victory" ? encounter.chase.victoryText : outcome === "escape" ? encounter.chase.escapeText : encounter.chase.conclusionText;
+}
+
 function concludeChase(encounter, outcome) {
   if (!isChase(encounter) || encounter.chase.concluded) return;
   encounter.chase.concluded = true;
   encounter.chase.outcome = outcome;
-  const text = outcome === "victory" ? encounter.chase.victoryText : outcome === "escape" ? encounter.chase.escapeText : encounter.chase.conclusionText;
+  const text = chaseOutcomeText(encounter, outcome);
   addLog(encounter, "chase", text, { outcome });
 }
 
 function advanceChaseRound(encounter) {
   if (!isChase(encounter) || encounter.chase.concluded) return;
+  if (isConsequenceChase(encounter)) {
+    if (encounter.chase.partyPosition >= encounter.targets.length - 1) {
+      concludeChase(encounter, "consequence");
+      return;
+    }
+    encounter.chase.partyPosition += 1;
+    encounter.activeTargetId = chaseObstacle(encounter)?.id ?? "";
+    encounter.currentRound += 1;
+    encounter.actorsActed = {};
+    for (const request of encounter.pendingRequests) if (request.status === "pending") request.status = "cancelled";
+    addLog(encounter, "round", `Advanced to consequence phase ${encounter.currentRound}.`);
+    return;
+  }
   advanceQuarry(encounter);
   if (!encounter.chase.scriptedQuarry && encounter.chase.quarryPosition >= encounter.targets.length && encounter.chase.partyPosition < encounter.targets.length) concludeChase(encounter, "escape");
   encounter.currentRound += 1;
@@ -288,7 +321,7 @@ function advanceStandardRound(encounter) {
 }
 
 async function postChaseOutcome(encounter, outcome) {
-  const text = outcome === "victory" ? encounter.chase.victoryText : outcome === "escape" ? encounter.chase.escapeText : encounter.chase.conclusionText;
+  const text = chaseOutcomeText(encounter, outcome);
   const tone = outcome === "victory" ? "gained" : outcome === "escape" ? "lost" : "gained";
   await ChatMessage.create({ content: `<div class="dnd5e-nce-threshold ${tone}"><h3>${esc(encounter.name)}</h3><p>${esc(text)}</p></div>`, flags: { [MODULE_ID]: { encounterId: encounter.id, chaseOutcome: outcome } } });
 }
@@ -754,7 +787,8 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     actions: {
       addTarget: EncounterEditor.addTarget, removeTarget: EncounterEditor.removeTarget, addCheck: EncounterEditor.addCheck, removeCheck: EncounterEditor.removeCheck,
       addModifier: EncounterEditor.addModifier, removeModifier: EncounterEditor.removeModifier, addThreshold: EncounterEditor.addThreshold,
-      removeThreshold: EncounterEditor.removeThreshold, addReward: EncounterEditor.addReward, removeReward: EncounterEditor.removeReward, parseTargets: EncounterEditor.parseTargets
+      removeThreshold: EncounterEditor.removeThreshold, addReward: EncounterEditor.addReward, removeReward: EncounterEditor.removeReward, parseTargets: EncounterEditor.parseTargets,
+      addConsequence: EncounterEditor.addConsequence, removeConsequence: EncounterEditor.removeConsequence
     }
   };
   static PARTS = { form: { template: `modules/${MODULE_ID}/templates/editor.hbs`, root: true, scrollable: [".content"] } };
@@ -765,19 +799,21 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     const actors = game.actors.filter((actor) => actor.type === "character").map((actor) => ({ id: actor.id, name: actor.name, image: actor.img, nickname: this.encounter.participantNicknames[actor.id] ?? "", selected: selected.has(actor.id) }));
     const dropLabels = { social: "targets", research: "sources", chase: "obstacles", exploration: "locations", skill: "challenges" };
     const addTargetLabels = { social: "Add Target", research: "Add Source", chase: "Add Obstacle", exploration: "Add Location", skill: "Add Challenge" };
+    const removeTargetLabels = { social: "Remove Target", research: "Remove Source", chase: "Remove Obstacle", exploration: "Remove Location", skill: "Remove Challenge" };
     const editableEncounter = clone(this.encounter);
+    const consequenceMode = isConsequenceChase(this.encounter);
     if (editableEncounter.type === "chase") editableEncounter.targets.forEach((target) => { target.adjustedGoal = chaseGoal(editableEncounter, target); });
     if (editableEncounter.type === "research") editableEncounter.targets.forEach((target) => {
       target.researchRows = actors.filter((actor) => actor.selected).map((actor) => ({ id: actor.id, name: actor.name, available: target.availabilityByActor?.[actor.id] !== false, maximum: researchMaxFor(target, actor.id), earned: researchPointsFor(target, actor.id) }));
     });
     const headings = { social: "Influence Targets", research: "Research Sources", chase: "Chase Obstacles", exploration: "Exploration Locations", skill: "Skill Challenges" };
     return {
-      ...context, encounter: editableEncounter, actors, isSocial: this.encounter.type === "social", isResearch: this.encounter.type === "research", isChase: this.encounter.type === "chase", isQuickParse: ["chase", "skill"].includes(this.encounter.type), isPointEncounter: ["social", "research", "skill", "chase"].includes(this.encounter.type), typeLabels: TYPE_LABELS,
+      ...context, encounter: editableEncounter, actors, isSocial: this.encounter.type === "social", isResearch: this.encounter.type === "research", isChase: this.encounter.type === "chase", isConsequenceChase: consequenceMode, isQuickParse: ["chase", "skill"].includes(this.encounter.type), isPointEncounter: ["social", "research", "skill", "chase"].includes(this.encounter.type), typeLabels: TYPE_LABELS,
       checkChoices: Object.fromEntries(checkChoices()), checkChoicesWithAll: Object.fromEntries([["", "All checks"], ...checkChoices()]),
       targetChoices: Object.fromEntries([["", "This target"], ...this.encounter.targets.map((target) => [target.id, displayName(target)])]),
       dcVisibilities: { hidden: "Hidden", relative: "Relative difficulty", exact: "Exact DCs" }, criticalModes: { none: "No automatic critical results", margin5: "Critical success/failure at DC ±5" },
       modifierKinds: { weakness: "Weakness", resistance: "Resistance", circumstance: "Circumstance" }, modifierEffects: { bonus: "Roll bonus/penalty", dc: "DC adjustment", advantage: "Advantage", disadvantage: "Disadvantage" },
-      rewardKinds: { narrative: "Narrative reward", item: "Item reward", currency: "Currency reward", modifier: "Mechanical modifier", points: "Points against a target" }, rewardActivations: { automatic: "Automatic", manual: "GM activates" }, currencies: { cp: "Copper (cp)", sp: "Silver (sp)", ep: "Electrum (ep)", gp: "Gold (gp)", pp: "Platinum (pp)" }, dropLabel: dropLabels[this.encounter.type], addTargetLabel: addTargetLabels[this.encounter.type], elementHeading: headings[this.encounter.type], researchPointModes: { shared: "Shared source progress", individual: "Track each character's RP" }, chaseTurnOrders: { before: "Quarry acts before the party", after: "Quarry acts after the party" }, exhaustionModes: { "2024": "2024 Exhaustion (−2 per level to d20 Tests)", legacy: "Optional legacy Exhaustion" }, dcReference: [{ label: "Very Easy", dc: 5 }, { label: "Easy", dc: 10 }, { label: "Medium", dc: 15 }, { label: "Hard", dc: 20 }, { label: "Very Hard", dc: 25 }, { label: "Nearly Impossible", dc: 30 }], chasePartySize: chasePartySize(this.encounter)
+      rewardKinds: { narrative: "Narrative reward", item: "Item reward", currency: "Currency reward", modifier: "Mechanical modifier", points: "Points against a target" }, rewardActivations: { automatic: "Automatic", manual: "GM activates" }, currencies: { cp: "Copper (cp)", sp: "Silver (sp)", ep: "Electrum (ep)", gp: "Gold (gp)", pp: "Platinum (pp)" }, dropLabel: dropLabels[this.encounter.type], addTargetLabel: addTargetLabels[this.encounter.type], removeTargetLabel: removeTargetLabels[this.encounter.type], elementHeading: headings[this.encounter.type], researchPointModes: { shared: "Shared source progress", individual: "Track each character's RP" }, chaseResolutions: { obstacle: "Obstacle Chase — clear each obstacle with Chase Points", consequence: "Consequence Chase — everyone checks once per phase" }, chaseTurnOrders: { before: "Quarry acts before the party", after: "Quarry acts after the party" }, exhaustionModes: { "2024": "2024 Exhaustion (−2 per level to d20 Tests)", legacy: "Optional legacy Exhaustion" }, dcReference: [{ label: "Very Easy", dc: 5 }, { label: "Easy", dc: 10 }, { label: "Medium", dc: 15 }, { label: "Hard", dc: 20 }, { label: "Very Hard", dc: 25 }, { label: "Nearly Impossible", dc: 30 }], chasePartySize: chasePartySize(this.encounter)
     };
   }
   async _onRender(context, options) {
@@ -869,7 +905,7 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     this.encounter.participantIds = [...this.element.querySelectorAll('[name="participantIds"]:checked')].map((input) => input.value);
     for (const actor of game.actors.filter((entry) => entry.type === "character")) this.encounter.participantNicknames[actor.id] = this.element.querySelector(`[name="participantNicknames.${actor.id}"]`)?.value.trim() ?? "";
     this.encounter.showProgressClocks = this.element.querySelector('[name="showProgressClocks"]')?.checked ?? false;
-    this.encounter.autoAdvance = this.element.querySelector('[name="autoAdvance"]')?.checked ?? true;
+    this.encounter.autoAdvance = isConsequenceChase(this.encounter) || (this.element.querySelector('[name="autoAdvance"]')?.checked ?? true);
     if (this.encounter.type === "chase") this.encounter.chase.scriptedQuarry = this.element.querySelector('[name="chase.scriptedQuarry"]')?.checked ?? false;
     this._captureTargetOptions();
     normalize(this.encounter);
@@ -899,22 +935,26 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
   }
   static async submit(_event, _form, formData) {
     const previousType = this.encounter.type;
+    const previousChaseResolution = this.encounter.chase?.resolution;
     foundry.utils.mergeObject(this.encounter, foundry.utils.expandObject(formData.object), { inplace: true, overwrite: true });
     normalize(this.encounter);
     if (previousType !== this.encounter.type) {
       const defaultNames = { social: "New NPC", research: "New Source", chase: "New Obstacle", exploration: "New Location", skill: "New Challenge" };
       for (const target of this.encounter.targets) if (target.name === defaultNames[previousType]) target.name = defaultNames[this.encounter.type];
     }
+    if (this.encounter.type === "chase" && previousChaseResolution !== this.encounter.chase.resolution) resetChase(this.encounter);
     this.encounter.participantIds = [...this.element.querySelectorAll('[name="participantIds"]:checked')].map((input) => input.value);
     for (const actor of game.actors.filter((entry) => entry.type === "character")) this.encounter.participantNicknames[actor.id] = this.element.querySelector(`[name="participantNicknames.${actor.id}"]`)?.value.trim() ?? "";
     this.encounter.showProgressClocks = this.element.querySelector('[name="showProgressClocks"]')?.checked ?? false;
-    this.encounter.autoAdvance = this.element.querySelector('[name="autoAdvance"]')?.checked ?? true;
+    this.encounter.autoAdvance = isConsequenceChase(this.encounter) || (this.element.querySelector('[name="autoAdvance"]')?.checked ?? true);
     if (this.encounter.type === "chase") this.encounter.chase.scriptedQuarry = this.element.querySelector('[name="chase.scriptedQuarry"]')?.checked ?? false;
     this._captureTargetOptions();
     normalize(this.encounter);
     await Store.save(this.encounter); ui.notifications.info("Encounter saved."); await this.render({ force: true });
   }
   static async addTarget() { this._capture(); this.encounter.targets.push(newTarget(this.encounter.type)); await this.render({ force: true }); }
+  static async addConsequence() { this._capture(); this.encounter.chase.consequenceOutcomes.push(newConsequenceOutcome(0, "Consequence", "")); await this.render({ force: true }); }
+  static async removeConsequence(_event, target) { this._capture(); this.encounter.chase.consequenceOutcomes.splice(Number(target.dataset.index), 1); if (!this.encounter.chase.consequenceOutcomes.length) this.encounter.chase.consequenceOutcomes.push(newConsequenceOutcome(0, "Consequence", "")); await this.render({ force: true }); }
   static async parseTargets() {
     this._capture();
     const source = this.element.querySelector('[name="quickParse"]')?.value ?? "";
@@ -1057,7 +1097,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
     const participants = encounter ? participantActors(encounter).map((actor) => ({ id: actor.id, name: actor.name, displayName: encounter.participantNicknames[actor.id]?.trim() || actor.name, image: actor.img, owned: canControlActor(actor), acted: !!encounter.actorsActed[actor.id], selected: actor.id === viewActorId, researchTotal: encounter.targets.reduce((sum, source) => sum + researchPointsFor(source, actor.id), 0), exhaustion: chaseExhaustion(encounter, actor.id), droppedOut: isChaseDropout(encounter, actor.id) })) : [];
     if (encounter) {
       const visibleTargets = !game.user.isGM && isResearch(encounter) ? encounter.targets.filter((target) => owned.some((actor) => researchSourceAvailable(target, actor.id))) : encounter.targets;
-      encounter.targets = visibleTargets.map((target, index) => { const effectiveGoal = chaseGoal(encounter, target); return { ...target, displayName: displayName(target), selected: target.id === viewTargetId, effectiveGoal, progressPct: effectiveGoal ? Math.min(100, Math.max(0, Math.round((target.points / effectiveGoal) * 100))) : 0, sourceAvailable: !isResearch(encounter) || (!!viewActorId && researchSourceAvailable(target, viewActorId)), selectedActorPoints: researchPointsFor(target, viewActorId), selectedActorMaximum: researchMaxFor(target, viewActorId), researchRows: participants.map((actor) => ({ ...actor, sourcePoints: researchPointsFor(target, actor.id), sourceMaximum: researchMaxFor(target, actor.id), available: researchSourceAvailable(target, actor.id) })), obstacleIndex: index + 1, obstacleCurrent: isChase(encounter) && index === encounter.chase.partyPosition, obstacleCompleted: isChase(encounter) && index < encounter.chase.partyPosition, obstacleQuarry: isChase(encounter) && index === encounter.chase.quarryPosition, unlockedThresholds: target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => ({ ...threshold, rewards: threshold.rewards.filter((reward) => game.user.isGM || (reward.playerVisible && reward.active)).map((reward) => ({ ...reward, description: rewardDetail(reward) })) })) }; });
+      encounter.targets = visibleTargets.map((target, index) => { const effectiveGoal = isConsequenceChase(encounter) ? 0 : chaseGoal(encounter, target); return { ...target, displayName: displayName(target), selected: target.id === viewTargetId, effectiveGoal, progressPct: effectiveGoal ? Math.min(100, Math.max(0, Math.round((target.points / effectiveGoal) * 100))) : 0, sourceAvailable: !isResearch(encounter) || (!!viewActorId && researchSourceAvailable(target, viewActorId)), selectedActorPoints: researchPointsFor(target, viewActorId), selectedActorMaximum: researchMaxFor(target, viewActorId), researchRows: participants.map((actor) => ({ ...actor, sourcePoints: researchPointsFor(target, actor.id), sourceMaximum: researchMaxFor(target, actor.id), available: researchSourceAvailable(target, actor.id) })), obstacleIndex: index + 1, obstacleCurrent: isChase(encounter) && index === encounter.chase.partyPosition, obstacleCompleted: isChase(encounter) && index < encounter.chase.partyPosition, obstacleQuarry: !isConsequenceChase(encounter) && isChase(encounter) && index === encounter.chase.quarryPosition, unlockedThresholds: target.thresholds.filter((threshold) => threshold.points <= target.points).map((threshold) => ({ ...threshold, rewards: threshold.rewards.filter((reward) => game.user.isGM || (reward.playerVisible && reward.active)).map((reward) => ({ ...reward, description: rewardDetail(reward) })) })) }; });
     }
     const selectedTarget = encounter?.targets.find((target) => target.id === viewTargetId);
     const selectedActor = participants.find((actor) => actor.id === viewActorId);
@@ -1068,7 +1108,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
       return { ...request, modifier: signed(actorCheckModifier(game.actors.get(request.actorId), requestCheck?.key)) };
     }) ?? [] : [];
     const canChase = !isChase(encounter) || (!encounter.chase.concluded && !!selectedTarget?.obstacleCurrent && !!selectedActor && !selectedActor.droppedOut);
-    return { ...context, encounter, participants, selectedTarget, selectedActor, pendingRequests, typeLabel: encounter ? TYPE_LABELS[encounter.type] : "", noEncounter: !encounter, isGM: game.user.isGM, isResearch: isResearch(encounter), isChase: isChase(encounter), canRequest: encounter?.status === "active" && !!selectedActor && !selectedActor.acted && (!isResearch(encounter) || !!selectedTarget?.sourceAvailable) && canChase, showDC: game.user.isGM || encounter?.dcVisibility === "exact", hasUndo: game.user.isGM && !!encounter?.history.length, chaseQuarryPosition: isChase(encounter) ? encounter.chase.quarryPosition + 1 : 0 };
+    return { ...context, encounter, participants, selectedTarget, selectedActor, pendingRequests, typeLabel: encounter ? TYPE_LABELS[encounter.type] : "", noEncounter: !encounter, isGM: game.user.isGM, isResearch: isResearch(encounter), isChase: isChase(encounter), isConsequenceChase: isConsequenceChase(encounter), consequenceOutcome: consequenceOutcome(encounter), canRequest: encounter?.status === "active" && !!selectedActor && !selectedActor.acted && (!isResearch(encounter) || !!selectedTarget?.sourceAvailable) && canChase, showDC: game.user.isGM || encounter?.dcVisibility === "exact", hasUndo: game.user.isGM && !!encounter?.history.length, chaseQuarryPosition: isChase(encounter) ? encounter.chase.quarryPosition + 1 : 0, chasePhaseCount: encounter?.targets?.length ?? 0 };
   }
   static manage() { const encounter = Store.get(); if (encounter) new EncounterEditor(encounter).render({ force: true }); else manager.render({ force: true }); }
   static selectActor(_event, target) { viewActorId = target.dataset.id; this.render({ force: true }); }
@@ -1210,6 +1250,8 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
         currentTarget.researchPointsByActor[actorId] = nextActorPoints;
         currentTarget.points = current.research.pointMode === "individual" ? researchTotal(currentTarget) : Math.max(0, previousPoints + earnedPoints);
         updateResearchExhaustion(current, currentTarget);
+      } else if (isConsequenceChase(current)) {
+        current.chase.successes = Math.max(0, current.chase.successes + earnedPoints);
       } else currentTarget.points = Math.max(0, currentTarget.points + earnedPoints);
       for (const selected of result.selectedModifiers) {
         const local = currentTarget.modifiers.find((modifier) => modifier.id === selected.id);
@@ -1230,7 +1272,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
       currentRequest.pointsAwarded = earnedPoints;
       currentRequest.gainedThresholdIds = gained.map((entry) => entry.id);
       currentRequest.lostThresholdIds = lost.map((entry) => entry.id);
-      addLog(current, "action", `${currentRequest.actorName} rolled ${result.total} on ${currentRequest.checkLabel}: ${result.degree.label}; ${earnedPoints >= 0 ? "+" : ""}${earnedPoints} point${Math.abs(earnedPoints) === 1 ? "" : "s"}.`, currentRequest);
+      addLog(current, "action", `${currentRequest.actorName} rolled ${result.total} on ${currentRequest.checkLabel}: ${result.degree.label}; ${earnedPoints >= 0 ? "+" : ""}${earnedPoints} ${isConsequenceChase(current) ? "Chase Success" : "point"}${Math.abs(earnedPoints) === 1 ? "" : "s"}.`, currentRequest);
       if (isChase(current)) {
         const exhaustion = result.degree.key === "criticalFailure" ? currentTarget.criticalFailureExhaustion : result.degree.key === "failure" ? currentTarget.failureExhaustion : 0;
         if (exhaustion) {
@@ -1240,7 +1282,7 @@ class EncounterTracker extends HandlebarsApplicationMixin(ApplicationV2) {
           addLog(current, "chase", `${currentRequest.actorName} gains ${exhaustion} Chase Exhaustion (now ${level}).`, { actorId: currentRequest.actorId, exhaustion: level });
           if (level >= 5 && prior < 5) chaseDropout = currentRequest.actorName;
         }
-        if (chaseGoal(current, currentTarget) && currentTarget.points >= chaseGoal(current, currentTarget)) {
+        if (!isConsequenceChase(current) && chaseGoal(current, currentTarget) && currentTarget.points >= chaseGoal(current, currentTarget)) {
           const gapBefore = current.chase.quarryPosition - current.chase.partyPosition;
           current.chase.partyPosition = Math.min(current.targets.length, current.chase.partyPosition + 1);
           current.activeTargetId = chaseObstacle(current)?.id ?? "";
