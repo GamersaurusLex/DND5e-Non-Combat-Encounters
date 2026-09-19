@@ -4,6 +4,7 @@
       <div class="form-group"><label>Name</label><div class="form-fields"><input name="name" value="{{encounter.name}}"></div></div>
       <div class="form-group"><label>Type</label><div class="form-fields"><select name="type">{{selectOptions typeLabels selected=encounter.type}}</select></div></div>
       <div class="form-group"><label>Image</label><div class="form-fields"><file-picker type="image" name="image" value="{{encounter.image}}"></file-picker></div></div>
+      <div class="form-group"><label>Background Image</label><div class="form-fields"><file-picker type="image" name="backgroundImage" value="{{encounter.backgroundImage}}"></file-picker><span>Optional; uses the encounter image when blank.</span></div></div>
       <label>Description and Stakes<textarea name="description">{{encounter.description}}</textarea></label>
       <div class="form-group"><label>Current Round</label><div class="form-fields"><input type="number" min="1" name="currentRound" value="{{encounter.currentRound}}"><label>Round Limit</label><input type="number" min="0" name="roundLimit" value="{{encounter.roundLimit}}"></div></div>
       <div class="form-group"><label>Player DC Visibility</label><div class="form-fields"><select name="dcVisibility">{{selectOptions dcVisibilities selected=encounter.dcVisibility}}</select></div></div>
@@ -41,7 +42,7 @@
           <div class="nce-card-actions"><button type="button" data-action="addReward" data-target-index="{{@../index}}" data-threshold-index="{{@index}}"><i class="fa-solid fa-plus"></i> Add Reward</button><button type="button" data-action="removeThreshold" data-target-index="{{@../index}}" data-index="{{@index}}"><i class="fa-solid fa-trash"></i> Remove Threshold</button></div></fieldset>{{/each}}<button type="button" data-action="addThreshold" data-target-index="{{@index}}"><i class="fa-solid fa-plus"></i> Add Threshold</button>
       </section>
     </fieldset>{{/each}}
-    <button type="button" data-action="addTarget"><i class="fa-solid fa-plus"></i> Add Target</button>
+    <button type="button" data-action="addTarget"><i class="fa-solid fa-plus"></i> {{addTargetLabel}}</button>
   </section>
   <footer class="form-footer"><button type="submit"><i class="fa-solid fa-floppy-disk"></i> Save Changes</button></footer>
 </div>

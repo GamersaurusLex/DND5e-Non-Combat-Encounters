@@ -1,7 +1,7 @@
 const MODULE_ID = "dnd5e-non-combat-encounters";
 const SETTINGS = { encounters: "encounters", active: "activeEncounter" };
 const SOCKET = `module.${MODULE_ID}`;
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 const MAX_HISTORY = 30;
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
 
@@ -75,7 +75,7 @@ function newEncounter() {
   const id = randomID();
   return {
     id, name: "New Non-Combat Encounter", type: "social", status: "draft",
-    schemaVersion: SCHEMA_VERSION, image: "icons/svg/d20-black.svg", description: "", participantIds: [],
+    schemaVersion: SCHEMA_VERSION, image: "icons/svg/d20-black.svg", backgroundImage: "", description: "", participantIds: [],
     currentRound: 1, roundLimit: 0, targets: [newTarget("social")], activeActorId: "", activeTargetId: "",
     actorsActed: {}, pendingRequests: [], log: [], history: [], dcVisibility: "hidden", criticalMode: "none", participantNicknames: {}, showProgressClocks: false, autoAdvance: true,
     research: { intervalHours: 4, pointMode: "shared" },
@@ -89,6 +89,7 @@ function normalize(encounter) {
   encounter.type = TYPE_LABELS[encounter.type] ? encounter.type : "social";
   encounter.status = ["draft", "active", "paused", "ended"].includes(encounter.status) ? encounter.status : "draft";
   encounter.participantIds = Array.isArray(encounter.participantIds) ? encounter.participantIds : [];
+  encounter.backgroundImage ??= "";
   encounter.currentRound = Math.max(1, Number(encounter.currentRound) || 1);
   encounter.roundLimit = Math.max(0, Number(encounter.roundLimit) || 0);
   encounter.activeActorId ??= "";
@@ -415,6 +416,27 @@ function publicEncounter(encounter) {
   return safe;
 }
 
+function renderCinematicHud() {
+  let hud = document.getElementById("dnd5e-nce-cinematic-hud");
+  if (!hud) {
+    hud = document.createElement("section");
+    hud.id = "dnd5e-nce-cinematic-hud";
+    document.body.append(hud);
+  }
+  const encounter = Store.get();
+  if (!encounter || encounter.status !== "active") {
+    hud.className = "";
+    hud.replaceChildren();
+    return;
+  }
+  const image = String(encounter.backgroundImage || encounter.image || "").trim();
+  hud.className = "visible";
+  const backdrop = document.createElement("div");
+  backdrop.className = "dnd5e-nce-cinematic-backdrop";
+  if (image) backdrop.style.backgroundImage = `url(${JSON.stringify(image)})`;
+  hud.replaceChildren(backdrop);
+}
+
 let playerEncounterCache = null;
 
 const Store = {
@@ -599,10 +621,12 @@ function handleSocketMessage(message) {
   }
   if (message.action === "open" && !game.user.isGM) {
     playerEncounterCache = message.encounter ? normalize(message.encounter) : null;
+    renderCinematicHud();
     tracker?.render(true);
   }
   if (message.action === "closed" && !game.user.isGM) {
     playerEncounterCache = null;
+    renderCinematicHud();
     tracker?.close();
   }
 }
@@ -740,6 +764,7 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
     const selected = new Set(this.encounter.participantIds);
     const actors = game.actors.filter((actor) => actor.type === "character").map((actor) => ({ id: actor.id, name: actor.name, image: actor.img, nickname: this.encounter.participantNicknames[actor.id] ?? "", selected: selected.has(actor.id) }));
     const dropLabels = { social: "targets", research: "sources", chase: "obstacles", exploration: "locations", skill: "challenges" };
+    const addTargetLabels = { social: "Add Target", research: "Add Source", chase: "Add Obstacle", exploration: "Add Location", skill: "Add Challenge" };
     const editableEncounter = clone(this.encounter);
     if (editableEncounter.type === "chase") editableEncounter.targets.forEach((target) => { target.adjustedGoal = chaseGoal(editableEncounter, target); });
     if (editableEncounter.type === "research") editableEncounter.targets.forEach((target) => {
@@ -752,7 +777,7 @@ class EncounterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
       targetChoices: Object.fromEntries([["", "This target"], ...this.encounter.targets.map((target) => [target.id, displayName(target)])]),
       dcVisibilities: { hidden: "Hidden", relative: "Relative difficulty", exact: "Exact DCs" }, criticalModes: { none: "No automatic critical results", margin5: "Critical success/failure at DC ±5" },
       modifierKinds: { weakness: "Weakness", resistance: "Resistance", circumstance: "Circumstance" }, modifierEffects: { bonus: "Roll bonus/penalty", dc: "DC adjustment", advantage: "Advantage", disadvantage: "Disadvantage" },
-      rewardKinds: { narrative: "Narrative reward", item: "Item reward", currency: "Currency reward", modifier: "Mechanical modifier", points: "Points against a target" }, rewardActivations: { automatic: "Automatic", manual: "GM activates" }, currencies: { cp: "Copper (cp)", sp: "Silver (sp)", ep: "Electrum (ep)", gp: "Gold (gp)", pp: "Platinum (pp)" }, dropLabel: dropLabels[this.encounter.type], elementHeading: headings[this.encounter.type], researchPointModes: { shared: "Shared source progress", individual: "Track each character's RP" }, chaseTurnOrders: { before: "Quarry acts before the party", after: "Quarry acts after the party" }, exhaustionModes: { "2024": "2024 Exhaustion (−2 per level to d20 Tests)", legacy: "Optional legacy Exhaustion" }, dcReference: [{ label: "Very Easy", dc: 5 }, { label: "Easy", dc: 10 }, { label: "Medium", dc: 15 }, { label: "Hard", dc: 20 }, { label: "Very Hard", dc: 25 }, { label: "Nearly Impossible", dc: 30 }], chasePartySize: chasePartySize(this.encounter)
+      rewardKinds: { narrative: "Narrative reward", item: "Item reward", currency: "Currency reward", modifier: "Mechanical modifier", points: "Points against a target" }, rewardActivations: { automatic: "Automatic", manual: "GM activates" }, currencies: { cp: "Copper (cp)", sp: "Silver (sp)", ep: "Electrum (ep)", gp: "Gold (gp)", pp: "Platinum (pp)" }, dropLabel: dropLabels[this.encounter.type], addTargetLabel: addTargetLabels[this.encounter.type], elementHeading: headings[this.encounter.type], researchPointModes: { shared: "Shared source progress", individual: "Track each character's RP" }, chaseTurnOrders: { before: "Quarry acts before the party", after: "Quarry acts after the party" }, exhaustionModes: { "2024": "2024 Exhaustion (−2 per level to d20 Tests)", legacy: "Optional legacy Exhaustion" }, dcReference: [{ label: "Very Easy", dc: 5 }, { label: "Easy", dc: 10 }, { label: "Medium", dc: 15 }, { label: "Hard", dc: 20 }, { label: "Very Hard", dc: 25 }, { label: "Nearly Impossible", dc: 30 }], chasePartySize: chasePartySize(this.encounter)
     };
   }
   async _onRender(context, options) {
@@ -1448,11 +1473,14 @@ Hooks.once("ready", async () => {
   renderEncounterSidebar();
   if (game.user.isGM) {
     const active = Store.get();
-    if (active?.status === "active") tracker.render(true);
+    if (active?.status === "active") {
+      renderCinematicHud();
+      tracker.render(true);
+    }
   } else game.socket.emit(SOCKET, { action: "request-sync", userId: game.user.id });
 });
 
-Hooks.on("nonCombatEncounterUpdated", () => { tracker?.render(false); manager?.render(false); renderEncounterSidebar(); });
+Hooks.on("nonCombatEncounterUpdated", () => { renderCinematicHud(); tracker?.render(false); manager?.render(false); renderEncounterSidebar(); });
 Hooks.on("renderSidebar", renderEncounterSidebar);
 Hooks.on("renderSceneControls", (_app, html) => {
   const root = html instanceof HTMLElement ? html : html?.[0]; const tools = root?.querySelector("#scene-controls-tools");

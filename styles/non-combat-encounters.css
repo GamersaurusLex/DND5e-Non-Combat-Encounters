@@ -59,6 +59,10 @@
 .nce-checkbox-row { display: flex; flex-wrap: wrap; gap: 1rem; margin: .5rem 0; }
 .nce-empty { padding: 2rem; text-align: center; }
 .nce-empty > i { font-size: 2rem; opacity: .6; }
+#dnd5e-nce-cinematic-hud { display: none; pointer-events: none; position: fixed; inset: 0; z-index: 20; }
+#dnd5e-nce-cinematic-hud.visible { display: block; }
+.dnd5e-nce-cinematic-backdrop { position: absolute; inset: 0; background-position: center; background-size: cover; background-color: rgba(0, 0, 0, .16); }
+.dnd5e-nce-cinematic-backdrop::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0, 0, 0, .08) 35%, rgba(0, 0, 0, .62)); }
 .nce-tracker { padding: 1rem; }
 .nce-tracker > header { display: flex; gap: .75rem; align-items: center; }
 .nce-tracker > header h2, .nce-tracker > header p { margin: 0; }
